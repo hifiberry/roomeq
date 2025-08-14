@@ -139,10 +139,62 @@ class MicrophoneDetector:
         # Unknown device
         return f"Unknown ({device_name})", "0"
     
-    def detect_microphones(self) -> List[Tuple[int, str, str]]:
+    def _get_microphone_gain(self, card_index: int) -> Optional[float]:
+        """
+        Get the current microphone gain for a specific card.
+        
+        Args:
+            card_index: ALSA card index
+            
+        Returns:
+            Current gain in dB or None if not available
+        """
+        try:
+            # Try to get mixer controls for the card
+            result = subprocess.run(
+                ['amixer', '-c', str(card_index), 'sget', 'Mic'],
+                capture_output=True, text=True, timeout=5
+            )
+            
+            if result.returncode == 0:
+                # Parse the output to extract gain value
+                # Look for pattern like "Capture 20 [100%] [20.00dB] [on]"
+                lines = result.stdout.split('\n')
+                for line in lines:
+                    if 'Capture' in line and 'dB' in line:
+                        # Extract dB value using regex
+                        db_match = re.search(r'\[([+-]?\d+(?:\.\d+)?)dB\]', line)
+                        if db_match:
+                            gain_db = float(db_match.group(1))
+                            logger.debug(f"Found microphone gain for card {card_index}: {gain_db} dB")
+                            return gain_db
+                            
+            # If Mic control doesn't exist, try other common control names
+            for control_name in ['Microphone', 'Capture', 'Input']:
+                result = subprocess.run(
+                    ['amixer', '-c', str(card_index), 'sget', control_name],
+                    capture_output=True, text=True, timeout=5
+                )
+                
+                if result.returncode == 0:
+                    lines = result.stdout.split('\n')
+                    for line in lines:
+                        if 'Capture' in line and 'dB' in line:
+                            db_match = re.search(r'\[([+-]?\d+(?:\.\d+)?)dB\]', line)
+                            if db_match:
+                                gain_db = float(db_match.group(1))
+                                logger.debug(f"Found {control_name} gain for card {card_index}: {gain_db} dB")
+                                return gain_db
+                                
+        except Exception as e:
+            logger.debug(f"Failed to get gain for card {card_index}: {e}")
+            
+        return None
+    
+    def detect_microphones(self) -> List[Tuple[int, str, str, Optional[float]]]:
         """
         Detect all connected microphones.
-        Returns list of (card_index, device_name, sensitivity) tuples.
+        Returns list of (card_index, device_name, sensitivity, gain_db) tuples.
         """
         microphones = []
         
@@ -161,8 +213,11 @@ class MicrophoneDetector:
             # Identify the microphone
             identified_device, sensitivity = self._identify_microphone(usb_id, device_name)
             
+            # Get microphone gain
+            gain_db = self._get_microphone_gain(card_index)
+            
             if identified_device:
-                microphones.append((card_index, identified_device, sensitivity))
+                microphones.append((card_index, identified_device, sensitivity, gain_db))
         
         return microphones
     
@@ -185,14 +240,15 @@ class MicrophoneDetector:
 def detect_microphones() -> List[str]:
     """
     Detect microphones and return formatted output similar to the bash script.
-    Returns list of strings in format: "card_index:device_name:sensitivity"
+    Returns list of strings in format: "card_index:device_name:sensitivity:gain"
     """
     detector = MicrophoneDetector()
     microphones = detector.detect_microphones()
     
     result = []
-    for card_index, device_name, sensitivity in microphones:
-        result.append(f"{card_index}:{device_name}:{sensitivity}")
+    for card_index, device_name, sensitivity, gain in microphones:
+        gain_str = f"{gain}" if gain is not None else "N/A"
+        result.append(f"{card_index}:{device_name}:{sensitivity}:{gain_str}")
     
     return result
 

@@ -25,10 +25,11 @@ class AudioAnalyzer:
         self.format_type = alsaaudio.PCM_FORMAT_S16_LE
         
         if device is None:
-            self.device, self.microphone_sensitivity = self._detect_microphone()
+            self.device, self.microphone_sensitivity, self.microphone_gain = self._detect_microphone()
         else:
             self.device = device
             self.microphone_sensitivity = None
+            self.microphone_gain = None
     
     def _detect_microphone(self):
         detector = MicrophoneDetector()
@@ -38,7 +39,7 @@ class AudioAnalyzer:
             raise RuntimeError("No microphone detected")
             
         mic = microphones[0]
-        card_id, name, sensitivity_str = mic
+        card_id, name, sensitivity_str, gain_db = mic
         device = f"hw:{card_id},0"
         
         try:
@@ -46,7 +47,7 @@ class AudioAnalyzer:
         except (ValueError, TypeError):
             sensitivity = None
             
-        return device, sensitivity
+        return device, sensitivity, gain_db
     
     def record_audio(self, duration_seconds=1.0):
         pcm = alsaaudio.PCM(
@@ -88,7 +89,16 @@ class AudioAnalyzer:
     def calculate_rms_spl(self, rms_db_fs):
         if self.microphone_sensitivity is None:
             return None
-        return self.microphone_sensitivity + rms_db_fs
+            
+        # Start with base sensitivity (max SPL at 0 dBFS)
+        effective_sensitivity = self.microphone_sensitivity
+        
+        # If gain is applied, it reduces the effective maximum SPL
+        # e.g., with 20 dB gain, 0 dBFS now represents (sensitivity - 20) dB SPL
+        if self.microphone_gain is not None:
+            effective_sensitivity = self.microphone_sensitivity - self.microphone_gain
+            
+        return effective_sensitivity + rms_db_fs
     
     def analyze_recording(self, duration_seconds=1.0):
         samples = self.record_audio(duration_seconds)
@@ -99,7 +109,9 @@ class AudioAnalyzer:
             'rms_db_fs': rms_db_fs,
             'rms_db_spl': rms_db_spl,
             'samples_count': len(samples),
-            'device': self.device
+            'device': self.device,
+            'microphone_sensitivity': self.microphone_sensitivity,
+            'microphone_gain': self.microphone_gain
         }
 
 def main():
@@ -112,11 +124,20 @@ def main():
     try:
         analyzer = AudioAnalyzer()
         print(f"Recording {args.time}s from {analyzer.device}...")
+        if analyzer.microphone_sensitivity and analyzer.microphone_gain is not None:
+            effective_sens = analyzer.microphone_sensitivity - analyzer.microphone_gain
+            print(f"Microphone: sensitivity={analyzer.microphone_sensitivity} dB SPL, gain={analyzer.microphone_gain} dB, effective={effective_sens} dB SPL")
+        elif analyzer.microphone_sensitivity:
+            print(f"Microphone: sensitivity={analyzer.microphone_sensitivity} dB SPL, gain=N/A")
+            
         result = analyzer.analyze_recording(args.time)
         
         print(f"Relative RMS: {result['rms_db_fs']:.2f} dB FS")
         if result['rms_db_spl'] is not None:
             print(f"Absolute RMS: {result['rms_db_spl']:.2f} dB SPL")
+        
+        if args.verbose:
+            print(f"Gain-adjusted calculation: {result['microphone_sensitivity']:.1f} - {result['microphone_gain']:.1f} + {result['rms_db_fs']:.2f} = {result['rms_db_spl']:.2f} dB SPL")
         
     except Exception as e:
         print(f"ERROR: {e}")
