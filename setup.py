@@ -17,10 +17,11 @@ setup(
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     include_package_data=True,
-    install_requires=["fastapi", "pyalsaaudio"],
+    install_requires=["fastapi", "pyalsaaudio", "numpy"],
     entry_points={
         'console_scripts': [
             'roomeq-server = roomeq.roomeq_server:app',
+            'rms-level = roomeq.analysis:main',
         ],
     },
     zip_safe=False,
