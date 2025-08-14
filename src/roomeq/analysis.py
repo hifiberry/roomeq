@@ -28,8 +28,8 @@ class AudioAnalyzer:
             self.device, self.microphone_sensitivity, self.microphone_gain = self._detect_microphone()
         else:
             self.device = device
-            self.microphone_sensitivity = None
-            self.microphone_gain = None
+            # Try to get sensitivity and gain for the specified device
+            self.microphone_sensitivity, self.microphone_gain = self._get_device_properties(device)
     
     def _detect_microphone(self):
         detector = MicrophoneDetector()
@@ -48,6 +48,28 @@ class AudioAnalyzer:
             sensitivity = None
             
         return device, sensitivity, gain_db
+    
+    def _get_device_properties(self, device):
+        """Get sensitivity and gain for a specific device."""
+        try:
+            detector = MicrophoneDetector()
+            microphones = detector.detect_microphones()
+            
+            for mic in microphones:
+                card_id, name, sensitivity_str, gain_db = mic
+                mic_device = f"hw:{card_id},0"
+                
+                if mic_device == device:
+                    try:
+                        sensitivity = float(sensitivity_str)
+                    except (ValueError, TypeError):
+                        sensitivity = None
+                    return sensitivity, gain_db
+                    
+            return None, None
+            
+        except Exception as e:
+            return None, None
     
     def record_audio(self, duration_seconds=1.0):
         pcm = alsaaudio.PCM(
@@ -112,6 +134,42 @@ class AudioAnalyzer:
             'device': self.device,
             'microphone_sensitivity': self.microphone_sensitivity,
             'microphone_gain': self.microphone_gain
+        }
+
+def measure_spl(device=None, duration=1.0):
+    """
+    Simple function to measure SPL level.
+    
+    Args:
+        device: ALSA device name (e.g., "hw:1,0"). If None, auto-detects first microphone.
+        duration: Measurement duration in seconds
+        
+    Returns:
+        Dictionary with SPL measurement results
+    """
+    try:
+        analyzer = AudioAnalyzer(device=device)
+        result = analyzer.analyze_recording(duration)
+        
+        return {
+            'spl_db': result['rms_db_spl'],
+            'rms_db_fs': result['rms_db_fs'],
+            'device': result['device'],
+            'duration': duration,
+            'microphone_sensitivity': result['microphone_sensitivity'],
+            'microphone_gain': result['microphone_gain'],
+            'success': True,
+            'error': None
+        }
+        
+    except Exception as e:
+        return {
+            'spl_db': None,
+            'rms_db_fs': None,
+            'device': device,
+            'duration': duration,
+            'success': False,
+            'error': str(e)
         }
 
 def main():

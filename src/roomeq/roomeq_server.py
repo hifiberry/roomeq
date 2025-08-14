@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-from fastapi import FastAPI, HTTPException
-from typing import List, Dict, Any
+from fastapi import FastAPI, HTTPException, Query
+from typing import List, Dict, Any, Optional
 import logging
 
 from .microphone import MicrophoneDetector, detect_microphones
+from .analysis import measure_spl
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -33,12 +34,13 @@ def get_microphones():
         microphones = detector.detect_microphones()
         
         result = []
-        for card_index, device_name, sensitivity in microphones:
+        for card_index, device_name, sensitivity, gain_db in microphones:
             result.append({
                 "card_index": card_index,
                 "device_name": device_name,
                 "sensitivity": float(sensitivity) if sensitivity != "0" else 0.0,
-                "sensitivity_str": sensitivity
+                "sensitivity_str": sensitivity,
+                "gain_db": gain_db
             })
         
         return result
@@ -106,6 +108,48 @@ def get_audio_cards():
         raise HTTPException(status_code=500, detail=f"Failed to get audio cards: {str(e)}")
 
 
+@app.get("/spl/measure")
+def measure_spl_level(
+    device: Optional[str] = Query(None, description="ALSA device name (e.g., hw:1,0). If not specified, auto-detects first microphone"),
+    duration: float = Query(1.0, description="Measurement duration in seconds", ge=0.1, le=10.0)
+):
+    """
+    Measure SPL level using the specified or auto-detected microphone.
+    
+    Returns SPL measurement with detailed information about the measurement.
+    """
+    try:
+        result = measure_spl(device=device, duration=duration)
+        
+        if not result['success']:
+            raise HTTPException(status_code=500, detail=result['error'])
+        
+        # Calculate effective sensitivity for display
+        effective_sensitivity = None
+        if result['microphone_sensitivity'] and result['microphone_gain'] is not None:
+            effective_sensitivity = result['microphone_sensitivity'] - result['microphone_gain']
+        
+        return {
+            "spl_db": result['spl_db'],
+            "rms_db_fs": result['rms_db_fs'],
+            "device": result['device'],
+            "duration": result['duration'],
+            "microphone": {
+                "sensitivity": result['microphone_sensitivity'],
+                "gain_db": result['microphone_gain'],
+                "effective_sensitivity": effective_sensitivity
+            },
+            "timestamp": __import__('time').time(),
+            "success": result['success']
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error measuring SPL: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to measure SPL: {str(e)}")
+
+
 @app.get("/")
 def root():
     """Root endpoint with API information."""
@@ -118,6 +162,7 @@ def root():
             "/microphones/raw", 
             "/audio/inputs",
             "/audio/cards",
+            "/spl/measure",
             "/docs"
         ]
     }
