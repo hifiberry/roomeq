@@ -1,5 +1,12 @@
 #!/usr/bin/make -f
 
+export PYBUILD_NAME=roomeq
+
 %:
 	dh $@ --with python3 --buildsystem=pybuild
-	dh_python3
+
+override_dh_auto_install:
+	dh_auto_install
+	# Remove bytecode files to fix lintian error
+	find debian/roomeq-restapi -name '*.pyc' -delete
+	find debian/roomeq-restapi -name '__pycache__' -type d -exec rm -rf {} + || true

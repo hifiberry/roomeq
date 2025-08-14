@@ -23,4 +23,5 @@ setup(
             'roomeq-server = roomeq.roomeq_server:app',
         ],
     },
+    zip_safe=False,
 )
