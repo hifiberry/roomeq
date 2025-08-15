@@ -1,0 +1,39 @@
+.TH RMS-LEVEL 1 "August 2025" "roomeq 0.1.0" "User Commands"
+.SH NAME
+rms-level \- measure RMS audio level from microphone
+.SH SYNOPSIS
+.B rms-level
+.SH DESCRIPTION
+The
+.B rms-level
+command measures the RMS (Root Mean Square) audio level from a connected microphone using ALSA. It detects the first available microphone, records 1 second of audio at 48kHz/16-bit mono, and displays both relative level (dB FS) and absolute level (dB SPL) if microphone sensitivity is known.
+.SH OUTPUT
+The command displays:
+.IP \[bu] 2
+Detected microphone name and device
+.IP \[bu]
+Microphone sensitivity (if available)
+.IP \[bu]
+Relative RMS level in dB FS (Full Scale)
+.IP \[bu]
+Absolute RMS level in dB SPL (Sound Pressure Level), if sensitivity is known
+.SH EXAMPLES
+.nf
+$ rms-level
+=== Simple RMS Level Measurement ===
+Using microphone: HiFiBerry Mic (hw:1,0)
+Sensitivity: 115.5 dB SPL
+
+Recording 1 second (S16_LE, 48kHz, mono)...
+Recorded 48000 samples
+
+=== RMS Results ===
+Relative RMS: -24.50 dB FS
+Absolute RMS: 91.00 dB SPL
+
+Measurement complete.
+.fi
+.SH AUTHOR
+HiFiBerry <support@hifiberry.com>
+.SH SEE ALSO
+.BR roomeq-server (1)

@@ -4,39 +4,3 @@ export PYBUILD_NAME=roomeq
 
 %:
 	dh $@ --with python3 --buildsystem=pybuild
-
-override_dh_auto_build:
-	# Download and build the specific pyalsaaudio version we need
-	mkdir -p debian/pyalsaaudio-build
-	cd debian/pyalsaaudio-build && \
-	wget -q https://files.pythonhosted.org/packages/source/p/pyalsaaudio/pyalsaaudio-0.11.0.tar.gz && \
-	tar -xzf pyalsaaudio-0.11.0.tar.gz && \
-	cd pyalsaaudio-0.11.0 && \
-	python3 setup.py build
-	dh_auto_build
-
-override_dh_auto_install:
-	# Install the specific pyalsaaudio version into our package
-	cd debian/pyalsaaudio-build/pyalsaaudio-0.11.0 && \
-	python3 setup.py install --root=$(CURDIR)/debian/roomeq --prefix=/usr --install-lib=/usr/lib/python3/dist-packages
-	dh_auto_install
-	# Remove bytecode files to fix lintian error
-	find debian/roomeq -name '*.pyc' -delete
-	find debian/roomeq -name '__pycache__' -type d -exec rm -rf {} + || true
-
-override_dh_python3:
-	# Skip dh_python3 since we're not using standard python dependencies
-	@echo "Skipping dh_python3 due to bundled dependencies"
-
-override_dh_usrlocal:
-	# Skip dh_usrlocal since we're not using /usr/local
-	@echo "Skipping dh_usrlocal check"
-
-override_dh_auto_test:
-	# Skip tests since we're bundling a custom version of pyalsaaudio
-	# that isn't available during the test phase
-	@echo "Skipping tests due to bundled dependencies"
-
-override_dh_auto_clean:
-	rm -rf debian/pyalsaaudio-build
-	dh_auto_clean
