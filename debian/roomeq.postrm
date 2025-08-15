@@ -1,0 +1,28 @@
+#!/bin/sh
+# postrm script for roomeq
+
+set -e
+
+case "$1" in
+    purge)
+        # Remove roomeq user when purging package
+        if getent passwd roomeq > /dev/null; then
+            deluser --quiet roomeq || true
+        fi
+        
+        # Remove home directory
+        rm -rf /var/lib/roomeq || true
+        ;;
+
+    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        ;;
+
+    *)
+        echo "postrm called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

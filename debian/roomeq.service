@@ -7,6 +7,8 @@ ExecStart=/usr/bin/roomeq-server
 Restart=always
 User=roomeq
 Group=roomeq
+WorkingDirectory=/var/lib/roomeq
+Environment=HOME=/var/lib/roomeq
 
 [Install]
 WantedBy=multi-user.target

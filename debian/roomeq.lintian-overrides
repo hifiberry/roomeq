@@ -1,0 +1,2 @@
+# Manual page is not critical for this internal tool
+roomeq: no-manual-page usr/bin/rms-level
