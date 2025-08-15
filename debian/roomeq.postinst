@@ -1,0 +1,35 @@
+#!/bin/sh
+# postinst script for roomeq
+
+set -e
+
+case "$1" in
+    configure)
+        # Create virtual environment for roomeq
+        if [ ! -d /opt/roomeq/venv ]; then
+            mkdir -p /opt/roomeq
+            python3 -m venv /opt/roomeq/venv
+            /opt/roomeq/venv/bin/pip install pyalsaaudio==0.11.0
+        fi
+        
+        # Create wrapper script that uses the virtual environment
+        cat > /usr/bin/roomeq-server-wrapper << 'EOF'
+#!/bin/bash
+export PYTHONPATH=/opt/roomeq/venv/lib/python*/site-packages:$PYTHONPATH
+exec /opt/roomeq/venv/bin/python3 /usr/bin/roomeq-server "$@"
+EOF
+        chmod +x /usr/bin/roomeq-server-wrapper
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0
