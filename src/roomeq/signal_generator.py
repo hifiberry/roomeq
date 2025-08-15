@@ -42,15 +42,12 @@ class SignalGenerator:
     def _open_playback(self):
         """Open ALSA PCM device for playback."""
         try:
-            self.pcm = alsaaudio.PCM(
-                alsaaudio.PCM_PLAYBACK,
-                alsaaudio.PCM_NORMAL,
-                device=self.device,
-                channels=self.channels,
-                rate=self.sample_rate,
-                format=self.format_type,
-                periodsize=1024
-            )
+            # For alsaaudio 0.8, use positional parameters and set properties after creation
+            self.pcm = alsaaudio.PCM(alsaaudio.PCM_PLAYBACK, alsaaudio.PCM_NORMAL, self.device)
+            self.pcm.setchannels(self.channels)
+            self.pcm.setrate(self.sample_rate)
+            self.pcm.setformat(self.format_type)
+            self.pcm.setperiodsize(1024)
             logger.debug(f"Opened playback device: {self.device}")
             
         except alsaaudio.ALSAAudioError as e:

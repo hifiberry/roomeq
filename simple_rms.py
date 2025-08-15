@@ -29,7 +29,7 @@ def detect_microphone():
             
         # Get first microphone
         mic = microphones[0]
-        card_id, name, sensitivity_str = mic
+        card_id, name, sensitivity_str, gain_db = mic
         device = f"hw:{card_id},0"
         
         try:
@@ -61,16 +61,12 @@ def record_and_measure(device, sensitivity):
     print(f"\nRecording 1 second (S16_LE, 48kHz, mono)...")
     
     try:
-        # Open PCM device
-        pcm = alsaaudio.PCM(
-            alsaaudio.PCM_CAPTURE,
-            alsaaudio.PCM_NORMAL,
-            device=device,
-            channels=channels,
-            rate=sample_rate,
-            format=format_type,
-            periodsize=1024
-        )
+        # Open PCM device - for alsaaudio 0.8, use positional parameters and set properties after creation
+        pcm = alsaaudio.PCM(alsaaudio.PCM_CAPTURE, alsaaudio.PCM_NORMAL, device)
+        pcm.setchannels(channels)
+        pcm.setrate(sample_rate)
+        pcm.setformat(format_type)
+        pcm.setperiodsize(1024)
         
         # Calculate total samples needed
         total_samples = int(sample_rate * duration)

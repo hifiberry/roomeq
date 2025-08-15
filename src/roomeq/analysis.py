@@ -72,15 +72,12 @@ class AudioAnalyzer:
             return None, None
     
     def record_audio(self, duration_seconds=1.0):
-        pcm = alsaaudio.PCM(
-            alsaaudio.PCM_CAPTURE,
-            alsaaudio.PCM_NORMAL,
-            device=self.device,
-            channels=self.channels,
-            rate=self.sample_rate,
-            format=self.format_type,
-            periodsize=1024
-        )
+        # For alsaaudio 0.8, use positional parameters and set properties after creation
+        pcm = alsaaudio.PCM(alsaaudio.PCM_CAPTURE, alsaaudio.PCM_NORMAL, self.device)
+        pcm.setchannels(self.channels)
+        pcm.setrate(self.sample_rate)
+        pcm.setformat(self.format_type)
+        pcm.setperiodsize(1024)
         
         total_samples = int(self.sample_rate * duration_seconds)
         samples_collected = 0

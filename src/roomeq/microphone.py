@@ -60,7 +60,8 @@ class MicrophoneDetector:
             
             # Try to open a PCM device for capture on this card
             try:
-                pcm = alsaaudio.PCM(alsaaudio.PCM_CAPTURE, device=f"hw:{card_index}")
+                # For alsaaudio 0.8, use positional parameters
+                pcm = alsaaudio.PCM(alsaaudio.PCM_CAPTURE, alsaaudio.PCM_NORMAL, f"hw:{card_index}")
                 pcm.close()
                 return True
             except alsaaudio.ALSAAudioError:
