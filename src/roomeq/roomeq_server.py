@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 import logging
 import time
 import os
+import threading
 import numpy as np
 import wave
 import signal
@@ -516,11 +517,30 @@ def start_recording_endpoint():
                 detector = MicrophoneDetector()
                 microphones = detector.detect_microphones()
                 if not microphones:
-                    abort(500, "No microphone detected")
+                    logger.error("No microphone detected for recording")
+                    return jsonify({
+                        "error": "No microphone detected",
+                        "message": "No microphone was detected. Please ensure a microphone is connected and accessible.",
+                        "suggestions": [
+                            "Check if microphone is physically connected",
+                            "Verify ALSA configuration",
+                            "Check microphone permissions"
+                        ]
+                    }), 500
                 card_id = microphones[0][0]
                 device = f"hw:{card_id},0"
+                logger.info(f"Auto-detected microphone device: {device}")
             except Exception as e:
-                abort(500, f"Failed to detect microphone: {str(e)}")
+                logger.error(f"Error during microphone detection: {e}")
+                return jsonify({
+                    "error": "Microphone detection failed",
+                    "message": f"Failed to detect microphone: {str(e)}",
+                    "suggestions": [
+                        "Check system audio configuration",
+                        "Verify ALSA is properly installed",
+                        "Check microphone hardware connection"
+                    ]
+                }), 500
         
         # Generate unique recording ID
         recording_id = str(uuid.uuid4())[:8]  # Short UUID for easier handling
@@ -543,7 +563,11 @@ def start_recording_endpoint():
         
     except Exception as e:
         logger.error(f"Error starting recording: {e}")
-        abort(500, f"Failed to start recording: {str(e)}")
+        return jsonify({
+            "error": "Recording failed",
+            "message": f"Failed to start recording: {str(e)}",
+            "recording_id": recording_id if 'recording_id' in locals() else None
+        }), 500
 
 
 @app.route("/audio/record/status/<recording_id>", methods=["GET"])
@@ -790,7 +814,7 @@ def start_noise():
         amplitude_str = request.args.get("amplitude", "0.5")
         device = request.args.get("device")
         
-        duration = validate_float_param("duration", duration_str, 1.0, 30.0)
+        duration = validate_float_param("duration", duration_str, 1.0, 60.0)  # Max 60 seconds
         amplitude = validate_float_param("amplitude", amplitude_str, 0.0, 1.0)
         
         # Stop any existing playback
@@ -801,7 +825,7 @@ def start_noise():
         # Create new generator
         _signal_generator = SignalGenerator(device=device)
         
-        # Set initial stop time
+        # Set stop time for monitoring
         stop_time = datetime.now() + timedelta(seconds=duration)
         
         # Update playback state
@@ -815,13 +839,13 @@ def start_noise():
             'end_freq': None,
             'sweeps': None,
             'sweep_duration': None,
-            'total_duration': None
+            'total_duration': duration
         })
         
-        # Start playing noise (infinite duration, will be stopped by monitor)
-        _signal_generator.play_noise(duration=0, amplitude=amplitude)
+        # Start playing noise with the actual duration (no infinite duration)
+        _signal_generator.play_noise(duration=duration, amplitude=amplitude)
         
-        # Start monitor thread
+        # Start monitor thread as backup safety measure
         monitor_thread = threading.Thread(target=_monitor_playback, daemon=True)
         monitor_thread.start()
         
