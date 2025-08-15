@@ -11,6 +11,8 @@ import subprocess
 import uuid
 import numpy as np
 import wave
+import signal
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -44,6 +46,7 @@ _playback_state = {
 _temp_dir = tempfile.mkdtemp(prefix="roomeq_recordings_")
 _active_recordings = {}  # {recording_id: {"thread": thread, "filename": filename, "status": status}}
 _completed_recordings = {}  # {recording_id: {"filename": filename, "timestamp": datetime, "duration": float}}
+_cleanup_timer = None
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
@@ -164,6 +167,72 @@ def _validate_recording_file(filename: str) -> str:
         abort(403, "Access denied")
     
     return filepath
+
+
+def _cleanup_old_recordings():
+    """Clean up recordings older than 10 minutes."""
+    global _completed_recordings
+    
+    cutoff_time = datetime.now() - timedelta(minutes=10)
+    recordings_to_remove = []
+    
+    logger.info("Running cleanup job for old recordings")
+    
+    for recording_id, recording in _completed_recordings.items():
+        if recording["timestamp"] < cutoff_time:
+            recordings_to_remove.append(recording_id)
+    
+    for recording_id in recordings_to_remove:
+        try:
+            recording = _completed_recordings[recording_id]
+            filepath = recording["filepath"]
+            
+            # Remove the file
+            if os.path.exists(filepath):
+                os.unlink(filepath)
+                logger.info(f"Cleaned up old recording file: {recording['filename']}")
+            
+            # Remove from completed recordings
+            del _completed_recordings[recording_id]
+            logger.info(f"Removed old recording from memory: {recording_id}")
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up recording {recording_id}: {e}")
+    
+    if recordings_to_remove:
+        logger.info(f"Cleanup job completed: removed {len(recordings_to_remove)} old recordings")
+    else:
+        logger.debug("Cleanup job completed: no old recordings to remove")
+
+
+def _start_cleanup_timer():
+    """Start the periodic cleanup timer (runs every 60 minutes)."""
+    global _cleanup_timer
+    
+    def run_cleanup():
+        _cleanup_old_recordings()
+        # Schedule next cleanup
+        _start_cleanup_timer()
+    
+    _cleanup_timer = threading.Timer(3600.0, run_cleanup)  # 3600 seconds = 60 minutes
+    _cleanup_timer.daemon = True
+    _cleanup_timer.start()
+    logger.info("Started cleanup timer: will run every 60 minutes")
+
+
+def _stop_cleanup_timer():
+    """Stop the cleanup timer."""
+    global _cleanup_timer
+    if _cleanup_timer and _cleanup_timer.is_alive():
+        _cleanup_timer.cancel()
+        logger.info("Stopped cleanup timer")
+
+
+def _signal_handler(signum, frame):
+    """Handle shutdown signals to cleanup resources."""
+    logger.info(f"Received signal {signum}, shutting down...")
+    _stop_cleanup_timer()
+    sys.exit(0)
 
 
 @app.route("/version", methods=["GET"])
@@ -720,6 +789,61 @@ def delete_recording_file(filename: str):
         abort(500, f"Failed to delete recording file: {str(e)}")
 
 
+@app.route("/audio/record/cleanup", methods=["POST"])
+def cleanup_recordings():
+    """Manually trigger cleanup of recordings older than 10 minutes."""
+    try:
+        # Get count before cleanup
+        before_count = len(_completed_recordings)
+        
+        # Run cleanup
+        _cleanup_old_recordings()
+        
+        # Get count after cleanup
+        after_count = len(_completed_recordings)
+        removed_count = before_count - after_count
+        
+        return jsonify({
+            "status": "success",
+            "message": f"Cleanup completed successfully",
+            "recordings_before": before_count,
+            "recordings_after": after_count,
+            "recordings_removed": removed_count
+        })
+        
+    except Exception as e:
+        logger.error(f"Error during manual cleanup: {e}")
+        abort(500, f"Cleanup failed: {str(e)}")
+
+
+@app.route("/audio/record/cleanup/status", methods=["GET"])
+def cleanup_status():
+    """Get current cleanup status and settings."""
+    global _cleanup_timer
+    
+    cutoff_time = datetime.now() - timedelta(minutes=10)
+    old_recordings = []
+    
+    for recording_id, recording in _completed_recordings.items():
+        if recording["timestamp"] < cutoff_time:
+            age_minutes = (datetime.now() - recording["timestamp"]).total_seconds() / 60
+            old_recordings.append({
+                "recording_id": recording_id,
+                "filename": recording["filename"],
+                "timestamp": recording["timestamp"].isoformat(),
+                "age_minutes": round(age_minutes, 1)
+            })
+    
+    return jsonify({
+        "cleanup_interval_minutes": 60,
+        "max_age_minutes": 10,
+        "timer_active": _cleanup_timer is not None and _cleanup_timer.is_alive(),
+        "total_recordings": len(_completed_recordings),
+        "old_recordings_count": len(old_recordings),
+        "old_recordings": old_recordings
+    })
+
+
 @app.route("/audio/sweep/start", methods=["POST"])
 def start_sine_sweep():
     """Start playing a sine sweep for the specified duration."""
@@ -1193,6 +1317,13 @@ def root():
 
 def main():
     """Main entry point for the roomeq-server console script."""
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+    
+    # Start the cleanup timer
+    _start_cleanup_timer()
+    
     app.run(
         host="0.0.0.0", 
         port=10315,
