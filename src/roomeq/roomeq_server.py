@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from flask import Flask, jsonify, request, abort
+from flask_cors import CORS
 from typing import List, Dict, Any, Optional
 import logging
 import threading
@@ -24,44 +24,35 @@ _playback_state = {
     'device': None
 }
 
-app = FastAPI(
-    title="RoomEQ Audio Processing API",
-    description="""
-    REST API for RoomEQ microphone detection, SPL measurement, and audio signal generation.
-    
-    This API provides endpoints for:
-    - Detecting available microphones with sensitivity and gain information
-    - Measuring sound pressure levels (SPL) using detected microphones  
-    - Generating test signals (noise, sine sweeps) for acoustic measurements
-    - Real-time signal playback control with keep-alive functionality
-    
-    Designed for acoustic measurement systems, room correction, and audio testing applications.
-    """,
-    version="0.2.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
+app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
-# Add middleware for better reverse proxy support
-@app.middleware("http")
-async def add_proxy_headers(request: Request, call_next):
-    """Middleware to handle reverse proxy headers and prevent upgrade warnings."""
-    response = await call_next(request)
-    
-    # Add headers to indicate we don't support WebSocket upgrades
+# Add response headers middleware
+@app.after_request
+def after_request(response):
+    """Add headers to all responses for better proxy compatibility."""
     response.headers["connection"] = "close"
-    
-    # Add CORS headers if needed for web frontends
-    response.headers["access-control-allow-origin"] = "*"
-    response.headers["access-control-allow-methods"] = "GET, POST, OPTIONS"
-    response.headers["access-control-allow-headers"] = "content-type"
-    
+    response.headers["server"] = "roomeq-api/0.2.0"
     return response
 
-@app.get("/version")
+
+def validate_float_param(param_name: str, value: str, min_val: float = None, max_val: float = None) -> float:
+    """Validate and convert a string parameter to float with optional bounds checking."""
+    try:
+        val = float(value)
+        if min_val is not None and val < min_val:
+            abort(400, f"{param_name} must be >= {min_val}")
+        if max_val is not None and val > max_val:
+            abort(400, f"{param_name} must be <= {max_val}")
+        return val
+    except ValueError:
+        abort(400, f"Invalid {param_name}: must be a number")
+
+
+@app.route("/version", methods=["GET"])
 def get_version():
     """Get API version information."""
-    return {
+    return jsonify({
         "version": "0.2.0",
         "api_name": "RoomEQ Audio Processing API",
         "features": [
@@ -70,16 +61,12 @@ def get_version():
             "White noise generation with keep-alive control",
             "Real-time playback management"
         ]
-    }
+    })
 
 
-@app.get("/microphones", response_model=List[Dict[str, Any]])
+@app.route("/microphones", methods=["GET"])
 def get_microphones():
-    """
-    Get detected microphones with their properties.
-    
-    Returns a list of microphone objects with card index, device name, and sensitivity.
-    """
+    """Get detected microphones with their properties."""
     try:
         detector = MicrophoneDetector()
         microphones = detector.detect_microphones()
@@ -94,93 +81,78 @@ def get_microphones():
                 "gain_db": gain_db
             })
         
-        return result
+        return jsonify(result)
     
     except Exception as e:
         logger.error(f"Error detecting microphones: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to detect microphones: {str(e)}")
+        abort(500, f"Failed to detect microphones: {str(e)}")
 
 
-@app.get("/microphones/raw")
+@app.route("/microphones/raw", methods=["GET"])
 def get_microphones_raw():
-    """
-    Get detected microphones in raw format (compatible with bash script output).
-    
-    Returns a list of strings in format: "card_index:device_name:sensitivity"
-    """
+    """Get detected microphones in raw format (compatible with bash script output)."""
     try:
         microphones = detect_microphones()
-        return {"microphones": microphones}
+        return jsonify({"microphones": microphones})
     
     except Exception as e:
         logger.error(f"Error detecting microphones: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to detect microphones: {str(e)}")
+        abort(500, f"Failed to detect microphones: {str(e)}")
 
 
-@app.get("/audio/inputs")
+@app.route("/audio/inputs", methods=["GET"])
 def get_audio_inputs():
-    """
-    Get audio input card indices.
-    
-    Returns a list of card indices that have input (capture) capability.
-    """
+    """Get audio input card indices."""
     try:
         detector = MicrophoneDetector()
         input_cards = detector.get_audio_inputs()
         
-        return {
+        return jsonify({
             "input_cards": input_cards,
             "count": len(input_cards)
-        }
+        })
     
     except Exception as e:
         logger.error(f"Error getting audio inputs: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get audio inputs: {str(e)}")
+        abort(500, f"Failed to get audio inputs: {str(e)}")
 
 
-@app.get("/audio/cards")
+@app.route("/audio/cards", methods=["GET"])
 def get_audio_cards():
-    """
-    Get all available audio cards.
-    
-    Returns a list of all audio cards detected by ALSA.
-    """
+    """Get all available audio cards."""
     try:
         detector = MicrophoneDetector()
         cards = detector.audio_cards
         
-        return {
+        return jsonify({
             "cards": cards,
             "count": len(cards)
-        }
+        })
     
     except Exception as e:
         logger.error(f"Error getting audio cards: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get audio cards: {str(e)}")
+        abort(500, f"Failed to get audio cards: {str(e)}")
 
 
-@app.get("/spl/measure")
-def measure_spl_level(
-    device: Optional[str] = Query(None, description="ALSA device name (e.g., hw:1,0). If not specified, auto-detects first microphone"),
-    duration: float = Query(1.0, description="Measurement duration in seconds", ge=0.1, le=10.0)
-):
-    """
-    Measure SPL level using the specified or auto-detected microphone.
-    
-    Returns SPL measurement with detailed information about the measurement.
-    """
+@app.route("/spl/measure", methods=["GET"])
+def measure_spl_level():
+    """Measure SPL level using the specified or auto-detected microphone."""
     try:
+        device = request.args.get("device")
+        duration_str = request.args.get("duration", "1.0")
+        duration = validate_float_param("duration", duration_str, 0.1, 10.0)
+        
         result = measure_spl(device=device, duration=duration)
         
         if not result['success']:
-            raise HTTPException(status_code=500, detail=result['error'])
+            abort(500, result['error'])
         
         # Calculate effective sensitivity for display
         effective_sensitivity = None
         if result['microphone_sensitivity'] and result['microphone_gain'] is not None:
             effective_sensitivity = result['microphone_sensitivity'] - result['microphone_gain']
         
-        return {
+        return jsonify({
             "spl_db": result['spl_db'],
             "rms_db_fs": result['rms_db_fs'],
             "device": result['device'],
@@ -190,15 +162,13 @@ def measure_spl_level(
                 "gain_db": result['microphone_gain'],
                 "effective_sensitivity": effective_sensitivity
             },
-            "timestamp": __import__('time').time(),
+            "timestamp": time.time(),
             "success": result['success']
-        }
+        })
     
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Error measuring SPL: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to measure SPL: {str(e)}")
+        abort(500, f"Failed to measure SPL: {str(e)}")
 
 
 def _monitor_playback():
@@ -218,21 +188,19 @@ def _monitor_playback():
             break
 
 
-@app.post("/audio/noise/start")
-def start_noise(
-    duration: float = Query(3.0, description="Duration in seconds to play noise", ge=1.0, le=30.0),
-    amplitude: float = Query(0.5, description="Amplitude (0.0-1.0)", ge=0.0, le=1.0),
-    device: Optional[str] = Query(None, description="Output device (e.g., hw:0,0). If not specified, uses default")
-):
-    """
-    Start playing white noise for the specified duration.
-    
-    This endpoint starts noise playback that will automatically stop after the specified duration
-    unless extended by calling the keep-playing endpoint.
-    """
+@app.route("/audio/noise/start", methods=["POST"])
+def start_noise():
+    """Start playing white noise for the specified duration."""
     global _signal_generator, _playback_state
     
     try:
+        duration_str = request.args.get("duration", "3.0")
+        amplitude_str = request.args.get("amplitude", "0.5")
+        device = request.args.get("device")
+        
+        duration = validate_float_param("duration", duration_str, 1.0, 30.0)
+        amplitude = validate_float_param("amplitude", amplitude_str, 0.0, 1.0)
+        
         # Stop any existing playback
         if _signal_generator and _playback_state['active']:
             _signal_generator.stop()
@@ -261,60 +229,53 @@ def start_noise(
         
         logger.info(f"Started noise playback for {duration} seconds at {amplitude*100:.0f}% amplitude")
         
-        return {
+        return jsonify({
             "status": "started",
             "duration": duration,
             "amplitude": amplitude,
             "device": device or "default",
             "stop_time": stop_time.isoformat(),
             "message": f"Noise playback started for {duration} seconds"
-        }
+        })
         
     except Exception as e:
         logger.error(f"Error starting noise: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to start noise: {str(e)}")
+        abort(500, f"Failed to start noise: {str(e)}")
 
 
-@app.post("/audio/noise/keep-playing")
-def keep_playing_noise(
-    duration: float = Query(3.0, description="Additional duration in seconds", ge=1.0, le=30.0)
-):
-    """
-    Extend the current noise playback by the specified duration.
-    
-    This endpoint extends the current playback time, allowing for continuous playback
-    as long as keep-alive requests are sent regularly. The playback will stop
-    automatically if no keep-alive request is received before the current stop time.
-    """
+@app.route("/audio/noise/keep-playing", methods=["POST"])
+def keep_playing_noise():
+    """Extend the current noise playback by the specified duration."""
     global _playback_state
     
     if not _playback_state['active']:
-        raise HTTPException(status_code=404, detail="No active noise playback to extend")
+        abort(404, "No active noise playback to extend")
     
     try:
+        duration_str = request.args.get("duration", "3.0")
+        duration = validate_float_param("duration", duration_str, 1.0, 30.0)
+        
         # Extend the stop time
         new_stop_time = datetime.now() + timedelta(seconds=duration)
         _playback_state['stop_time'] = new_stop_time
         
         logger.info(f"Extended noise playback by {duration} seconds")
         
-        return {
+        return jsonify({
             "status": "extended",
             "duration": duration,
             "new_stop_time": new_stop_time.isoformat(),
             "message": f"Playback extended by {duration} seconds"
-        }
+        })
         
     except Exception as e:
         logger.error(f"Error extending playback: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to extend playback: {str(e)}")
+        abort(500, f"Failed to extend playback: {str(e)}")
 
 
-@app.post("/audio/noise/stop")
+@app.route("/audio/noise/stop", methods=["POST"])
 def stop_noise():
-    """
-    Stop the current noise playback immediately.
-    """
+    """Stop the current noise playback immediately."""
     global _signal_generator, _playback_state
     
     try:
@@ -325,26 +286,24 @@ def stop_noise():
             
             logger.info("Stopped noise playback")
             
-            return {
+            return jsonify({
                 "status": "stopped",
                 "message": "Noise playback stopped"
-            }
+            })
         else:
-            return {
+            return jsonify({
                 "status": "not_active",
                 "message": "No active noise playback to stop"
-            }
+            })
             
     except Exception as e:
         logger.error(f"Error stopping noise: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to stop noise: {str(e)}")
+        abort(500, f"Failed to stop noise: {str(e)}")
 
 
-@app.get("/audio/noise/status")
+@app.route("/audio/noise/status", methods=["GET"])
 def get_noise_status():
-    """
-    Get the current status of noise playback.
-    """
+    """Get the current status of noise playbook."""
     global _playback_state
     
     if _playback_state['active'] and _playback_state['stop_time']:
@@ -353,24 +312,24 @@ def get_noise_status():
     else:
         remaining_time = 0
     
-    return {
+    return jsonify({
         "active": _playback_state['active'],
         "amplitude": _playback_state['amplitude'],
         "device": _playback_state['device'] or "default",
         "remaining_seconds": round(remaining_time, 1),
         "stop_time": _playback_state['stop_time'].isoformat() if _playback_state['stop_time'] else None
-    }
+    })
 
 
-@app.get("/")
+@app.route("/", methods=["GET"])
 def root():
     """Root endpoint with API information."""
-    return {
+    return jsonify({
         "message": "RoomEQ Audio Processing API",
         "version": "0.2.0",
         "description": "REST API for microphone detection, SPL measurement, and audio signal generation",
         "endpoints": {
-            "info": ["/", "/version", "/docs", "/redoc"],
+            "info": ["/", "/version"],
             "microphones": ["/microphones", "/microphones/raw"],
             "audio_devices": ["/audio/inputs", "/audio/cards"],
             "measurements": ["/spl/measure"],
@@ -386,24 +345,14 @@ def root():
             "keep_playing": "POST /audio/noise/keep-playing?duration=3",
             "measure_spl": "GET /spl/measure?duration=1.0"
         }
-    }
+    })
 
 
 def main():
     """Main entry point for the roomeq-server console script."""
-    import uvicorn
-    uvicorn.run(
-        app, 
+    app.run(
         host="0.0.0.0", 
         port=10315,
-        # Disable upgrade to avoid warnings with nginx reverse proxy
-        upgrade_timeout=0,
-        # Add headers for better proxy compatibility
-        headers=[("server", "roomeq-api/0.2.0")],
-        # Disable websockets since we don't use them
-        ws="none"
+        debug=False,
+        threaded=True
     )
-
-
-if __name__ == "__main__":
-    main()

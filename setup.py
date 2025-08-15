@@ -17,7 +17,7 @@ setup(
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     include_package_data=True,
-    install_requires=["fastapi", "pyalsaaudio", "numpy"],
+    install_requires=["flask>=2.0.0", "flask-cors>=3.0.0", "numpy"],
     entry_points={
         'console_scripts': [
             'roomeq-server = roomeq.roomeq_server:main',
