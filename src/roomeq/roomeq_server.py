@@ -15,8 +15,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 # Local imports
-from fft import load_wav_file, compute_fft, analyze_wav_file, validate_fft_parameters
-from recording import (
+from .fft import load_wav_file, compute_fft, analyze_wav_file, validate_fft_parameters
+from .recording import (
     recording_manager, 
     start_recording, 
     get_recording_status,
@@ -31,9 +31,9 @@ from recording import (
     signal_handler as recording_signal_handler
 )
 
-from microphone import MicrophoneDetector, detect_microphones
-from analysis import measure_spl
-from signal_generator import SignalGenerator
+from .microphone import MicrophoneDetector, detect_microphones
+from .analysis import measure_spl
+from .signal_generator import SignalGenerator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
