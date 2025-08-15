@@ -4,6 +4,7 @@ from flask_cors import CORS
 from typing import List, Dict, Any, Optional
 import logging
 import time
+import os
 import numpy as np
 import wave
 import signal
@@ -60,8 +61,43 @@ CORS(app)  # Enable CORS for all routes
 def after_request(response):
     """Add headers to all responses for better proxy compatibility."""
     response.headers["connection"] = "close"
-    response.headers["server"] = "roomeq-api/0.2.0"
+    response.headers["server"] = "roomeq-api/0.3.0"
     return response
+
+# Add request logging middleware
+@app.before_request
+def log_request_info():
+    """Log detailed request information for debugging."""
+    logger.info(f"Request: {request.method} {request.url}")
+    if request.args:
+        logger.debug(f"Query parameters: {dict(request.args)}")
+    if request.json:
+        logger.debug(f"JSON payload: {request.json}")
+
+# Add error logging
+@app.errorhandler(404)
+def not_found_error(error):
+    """Enhanced 404 error handler with detailed logging."""
+    logger.warning(f"404 Not Found: {request.method} {request.url} - {error.description}")
+    return jsonify({
+        "error": "Not Found",
+        "message": error.description or "The requested resource was not found",
+        "endpoint": request.endpoint,
+        "url": request.url,
+        "method": request.method
+    }), 404
+
+@app.errorhandler(400)
+def bad_request_error(error):
+    """Enhanced 400 error handler with detailed logging."""
+    logger.warning(f"400 Bad Request: {request.method} {request.url} - {error.description}")
+    return jsonify({
+        "error": "Bad Request", 
+        "message": error.description or "The request was invalid",
+        "endpoint": request.endpoint,
+        "url": request.url,
+        "method": request.method
+    }), 400
 
 
 def validate_float_param(param_name: str, value: str, min_val: float = None, max_val: float = None) -> float:
@@ -312,15 +348,23 @@ def analyze_fft():
 @app.route("/audio/analyze/fft-recording/<recording_id>", methods=["POST"])
 def analyze_fft_recording(recording_id: str):
     """Perform FFT analysis on a recorded file by recording ID."""
-    global _completed_recordings
     
-    if recording_id not in _completed_recordings:
-        abort(404, f"Recording {recording_id} not found")
+    logger.info(f"FFT analysis requested for recording {recording_id}")
     
-    recording = _completed_recordings[recording_id]
+    # Get recording status using the recording module
+    recording_status = get_recording_status(recording_id)
+    if recording_status is None:
+        logger.warning(f"Recording {recording_id} not found - may have been cleaned up or never existed")
+        abort(404, f"Recording {recording_id} not found. It may have been cleaned up or never existed.")
     
-    if not os.path.exists(recording["filepath"]):
-        abort(404, "Recording file no longer available")
+    if recording_status["status"] != "completed":
+        logger.warning(f"Recording {recording_id} is not completed (status: {recording_status['status']})")
+        abort(400, f"Recording {recording_id} is not completed. Current status: {recording_status['status']}")
+    
+    filepath = recording_status["filepath"]
+    if not os.path.exists(filepath):
+        logger.error(f"Recording file {filepath} no longer exists on disk")
+        abort(404, "Recording file no longer available - may have been cleaned up")
     
     try:
         # Get analysis parameters
@@ -329,6 +373,10 @@ def analyze_fft_recording(recording_id: str):
         start_time_str = request.args.get("start_time", "0")
         duration_str = request.args.get("duration")
         normalize_str = request.args.get("normalize")
+        
+        logger.debug(f"FFT analysis parameters for {recording_id}: window={window_type}, "
+                    f"fft_size={fft_size_str}, start_time={start_time_str}, "
+                    f"duration={duration_str}, normalize={normalize_str}")
         
         # Validate parameters
         start_time = 0.0
@@ -357,19 +405,21 @@ def analyze_fft_recording(recording_id: str):
         # Validate parameters using FFT module
         validate_fft_parameters(fft_size, window_type)
         
+        logger.info(f"Starting FFT analysis for recording {recording_id} on file {filepath}")
+        
         # Use FFT module for analysis
-        result = analyze_wav_file(recording["filepath"], window_type, fft_size, start_time, duration, normalize)
+        result = analyze_wav_file(filepath, window_type, fft_size, start_time, duration, normalize)
         
         # Prepare response with recording context
         response = {
             "status": "success",
             "recording_info": {
                 "recording_id": recording_id,
-                "filename": recording["filename"],
-                "original_duration": recording["duration"],
-                "original_device": recording["device"],
-                "original_sample_rate": recording["sample_rate"],
-                "timestamp": recording["timestamp"].isoformat()
+                "filename": recording_status["filename"],
+                "original_duration": recording_status["duration"],
+                "original_device": recording_status["device"],
+                "original_sample_rate": recording_status["sample_rate"],
+                "timestamp": recording_status["timestamp"]
             },
             "analysis_info": {
                 "analyzed_duration": result["file_info"]["analyzed_duration"],
