@@ -311,6 +311,7 @@ def analyze_fft():
     window_type = request.args.get("window", "hann")
     fft_size_str = request.args.get("fft_size")
     start_time_str = request.args.get("start_time", "0")
+    start_at_str = request.args.get("start_at")  # Alternative name for start_time
     duration_str = request.args.get("duration")
     normalize_str = request.args.get("normalize")
     points_per_octave_str = request.args.get("points_per_octave")
@@ -336,8 +337,14 @@ def analyze_fft():
         target_file = filepath
     
     # Validate optional parameters
+    # Handle both start_time and start_at (start_at takes precedence if both provided)
+    if start_at_str and start_time_str and start_time_str != "0":
+        abort(400, "Specify either 'start_time' or 'start_at', not both")
+    
     start_time = 0.0
-    if start_time_str:
+    if start_at_str:
+        start_time = validate_float_param("start_at", start_at_str, 0.0)
+    elif start_time_str:
         start_time = validate_float_param("start_time", start_time_str, 0.0)
     
     duration = None
@@ -427,18 +434,25 @@ def analyze_fft_recording(recording_id: str):
         window_type = request.args.get("window", "hann")
         fft_size_str = request.args.get("fft_size")
         start_time_str = request.args.get("start_time", "0")
+        start_at_str = request.args.get("start_at")  # Alternative name for start_time
         duration_str = request.args.get("duration")
         normalize_str = request.args.get("normalize")
         points_per_octave_str = request.args.get("points_per_octave")
         
         logger.debug(f"FFT analysis parameters for {recording_id}: window={window_type}, "
-                    f"fft_size={fft_size_str}, start_time={start_time_str}, "
+                    f"fft_size={fft_size_str}, start_time={start_time_str}, start_at={start_at_str}, "
                     f"duration={duration_str}, normalize={normalize_str}, "
                     f"points_per_octave={points_per_octave_str}")
         
         # Validate parameters
+        # Handle both start_time and start_at (start_at takes precedence if both provided)
+        if start_at_str and start_time_str and start_time_str != "0":
+            abort(400, "Specify either 'start_time' or 'start_at', not both")
+        
         start_time = 0.0
-        if start_time_str:
+        if start_at_str:
+            start_time = validate_float_param("start_at", start_at_str, 0.0)
+        elif start_time_str:
             start_time = validate_float_param("start_time", start_time_str, 0.0)
         
         duration = None
@@ -1125,15 +1139,17 @@ def root():
                     "window": "Window function (hann|hamming|blackman|rectangular, default: hann)",
                     "fft_size": "FFT size, power of 2 (64-65536, default: auto)",
                     "start_time": "Start analysis at time in seconds (default: 0)",
+                    "start_at": "Alternative to start_time - start analysis at time in seconds (default: 0)",
                     "duration": "Analyze duration in seconds (0.1-300, default: entire file)",
                     "normalize": "Normalize to frequency in Hz (0.1-50000, optional)",
                     "points_per_octave": "Summarize to log frequency buckets (1-100, optional)"
                 },
                 "examples": {
                     "basic": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav'",
+                    "with_start_at": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&start_at=2.5&duration=10'",
                     "with_summarization": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&points_per_octave=16'",
                     "external_file": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filepath=/path/to/file.wav&window=hann&normalize=1000'",
-                    "recording_analysis": "curl -X POST 'http://localhost:10315/audio/analyze/fft-recording/abc12345?points_per_octave=12'"
+                    "recording_analysis": "curl -X POST 'http://localhost:10315/audio/analyze/fft-recording/abc12345?points_per_octave=12&start_at=1.0'"
                 }
             },
             "playback_control": {

@@ -125,9 +125,35 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
         # Compute FFT
         fft_result = np.fft.rfft(windowed_data)
         
-        # Compute magnitude spectrum (in dB)
+        # Calculate window normalization factors (for the actual window used)
+        actual_window = window[:len(windowed_data)] if len(windowed_data) < len(window) else window
+        window_sum = np.sum(actual_window)
+        window_power_sum = np.sum(actual_window**2)
+        
+        # Equivalent Noise Bandwidth (ENBW) correction for the window
+        enbw = sample_rate * window_power_sum / (window_sum**2)
+        
+        # Frequency resolution
+        freq_resolution = sample_rate / fft_size
+        
+        # Compute magnitude spectrum with proper scaling
         magnitude = np.abs(fft_result)
-        magnitude_db = 20 * np.log10(magnitude + 1e-10)  # Add small value to avoid log(0)
+        
+        # Scale for single-sided spectrum (except DC and Nyquist)
+        if len(magnitude) > 1:
+            magnitude[1:] *= 2  # Double all frequencies except DC
+            if fft_size % 2 == 0 and len(magnitude) > 1:  # If even FFT size, don't double Nyquist
+                magnitude[-1] /= 2
+        
+        # Normalize by window power sum for proper amplitude scaling
+        magnitude = magnitude / np.sqrt(window_power_sum)
+        
+        # Convert to Power Spectral Density (PSD) - power per Hz
+        # Use ENBW for proper window correction in spectral density
+        psd = (magnitude**2) / enbw
+        
+        # Convert to dB relative to full scale squared per Hz
+        magnitude_db = 10 * np.log10(psd + 1e-20)  # Using 10*log10 for power density
         
         # Compute phase spectrum
         phase = np.angle(fft_result)
@@ -223,7 +249,7 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
             'fft_size': fft_size,
             'window_type': window_type,
             'sample_rate': sample_rate,
-            'frequency_resolution': float(sample_rate / fft_size),
+            'frequency_resolution': float(freq_resolution),
             'frequencies': frequencies.tolist(),
             'magnitudes': magnitude_db.tolist(),
             'phases': phase.tolist(),
@@ -231,7 +257,14 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
             'peak_magnitude': peak_magnitude,
             'spectral_centroid': float(spectral_centroid),
             'frequency_bands': frequency_bands,
-            'normalization': normalization_info
+            'normalization': normalization_info,
+            'spectral_density': {
+                'type': 'Power Spectral Density (PSD)',
+                'units': 'dB re FS²/Hz',
+                'description': 'Power spectral density with proper window correction and normalization',
+                'enbw_hz': float(enbw),
+                'window_correction_applied': True
+            }
         }
         
         # Add logarithmic summarization if requested

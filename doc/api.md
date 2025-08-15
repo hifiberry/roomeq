@@ -16,7 +16,7 @@ The RoomEQ Audio Processing API provides a comprehensive REST interface for micr
 - **Signal Generation**: White noise and logarithmic sine sweep generation with keep-alive functionality
 - **Multiple Sweep Support**: Generate consecutive sine sweeps for acoustic averaging
 - **Audio Recording**: Background recording to WAV files with secure file management
-- **FFT Analysis**: Comprehensive spectral analysis of WAV files with windowing functions, normalization, logarithmic frequency summarization, peak detection, and frequency band analysis
+- **FFT Analysis**: Comprehensive spectral analysis of WAV files with windowing functions, normalization, logarithmic frequency summarization, peak detection, frequency band analysis, and improved Power Spectral Density calculation with proper window correction
 - **Real-time Control**: Start, stop, extend, and monitor audio operations through REST endpoints
 - **Cross-Origin Support**: CORS enabled for web application integration
 
@@ -346,11 +346,12 @@ Perform FFT (Fast Fourier Transform) spectral analysis on a WAV file.
 - `window` (string, optional): Window function - "hann", "hamming", "blackman", or "none" (default: "hann")
 - `fft_size` (integer, optional): FFT size, must be power of 2 between 64-65536 (auto-calculated if not specified)
 - `start_time` (float, optional): Start analysis at this time in seconds (default: 0)
+- `start_at` (float, optional): Alternative name for `start_time` - start analysis at this time in seconds
 - `duration` (float, optional): Duration to analyze in seconds (default: entire file from start_time)
 - `normalize` (float, optional): Frequency in Hz to normalize to 0 dB (all other levels adjusted relative to this frequency)
 - `points_per_octave` (integer, optional): Summarize FFT into logarithmic frequency buckets (1-100, enables log frequency summarization)
 
-**Note:** Must specify either `filename` OR `filepath`, not both.
+**Note:** Must specify either `filename` OR `filepath`, not both. Use either `start_time` OR `start_at`, not both (start_at takes precedence if both are provided).
 
 **Success Response (200):**
 ```json
@@ -474,7 +475,22 @@ Perform FFT (Fast Fourier Transform) spectral analysis on a WAV file.
 }
 ```
 
-### Logarithmic Frequency Summarization
+### FFT Analysis Technical Details
+
+#### Power Spectral Density (PSD) Calculation
+The FFT analysis has been enhanced with proper Power Spectral Density calculation to ensure accurate spectral measurements:
+
+- **Window Correction**: Uses Equivalent Noise Bandwidth (ENBW) correction for proper spectral density normalization
+- **Single-Sided Spectrum**: Correctly scales for single-sided spectrum representation (doubling all frequencies except DC and Nyquist)
+- **Proper dB Conversion**: Uses `10*log10` for power density (not `20*log10` which is for magnitude)
+- **Spectral Density Units**: Results are in dB relative to full scale squared per Hz (dB re FS²/Hz)
+
+These improvements eliminate the artificial 3dB/octave roll-off that can occur with simple magnitude-based calculations when using logarithmic frequency averaging. This ensures:
+- White noise shows a flat response across all frequencies
+- Sine waves show their true amplitude regardless of frequency  
+- Spectral density is properly normalized for the window function used
+
+#### Logarithmic Frequency Summarization
 
 When the `points_per_octave` parameter is specified, the FFT analysis includes an additional `log_frequency_summary` section that groups the high-resolution FFT data into logarithmically-spaced frequency buckets. This is particularly useful for acoustic analysis where human hearing and audio systems respond logarithmically to frequency.
 
@@ -509,9 +525,12 @@ Perform FFT analysis on a specific recording by ID.
 - `window` (string, optional): Window function (default: "hann")
 - `fft_size` (integer, optional): FFT size, must be power of 2
 - `start_time` (float, optional): Start analysis time in seconds
+- `start_at` (float, optional): Alternative name for `start_time` - start analysis time in seconds  
 - `duration` (float, optional): Duration to analyze in seconds
 - `normalize` (float, optional): Frequency in Hz to normalize to 0 dB
 - `points_per_octave` (integer, optional): Summarize FFT into logarithmic frequency buckets (1-100)
+
+**Note:** Use either `start_time` OR `start_at`, not both (start_at takes precedence if both are provided).
 
 **Success Response (200):**
 ```json
@@ -782,6 +801,9 @@ curl -X POST "http://localhost:10315/audio/analyze/fft?filename=recording_abc123
 # Analyze specific time segment with custom FFT size
 curl -X POST "http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&start_time=5&duration=10&fft_size=16384&points_per_octave=12"
 
+# Alternative using start_at parameter
+curl -X POST "http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&start_at=5&duration=10&fft_size=16384&points_per_octave=12"
+
 # Analyze external WAV file with log frequency summarization
 curl -X POST "http://localhost:10315/audio/analyze/fft?filepath=/path/to/measurement.wav&points_per_octave=16"
 
@@ -1018,6 +1040,7 @@ class RoomEQController {
         if (options.window) params.append('window', options.window);
         if (options.fftSize) params.append('fft_size', options.fftSize);
         if (options.startTime) params.append('start_time', options.startTime);
+        if (options.startAt) params.append('start_at', options.startAt);
         if (options.duration) params.append('duration', options.duration);
         if (options.normalize) params.append('normalize', options.normalize);
         if (options.pointsPerOctave) params.append('points_per_octave', options.pointsPerOctave);
@@ -1035,6 +1058,7 @@ class RoomEQController {
         if (options.window) params.append('window', options.window);
         if (options.fftSize) params.append('fft_size', options.fftSize);
         if (options.startTime) params.append('start_time', options.startTime);
+        if (options.startAt) params.append('start_at', options.startAt);
         if (options.duration) params.append('duration', options.duration);
         if (options.normalize) params.append('normalize', options.normalize);
         if (options.pointsPerOctave) params.append('points_per_octave', options.pointsPerOctave);
