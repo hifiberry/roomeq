@@ -14,6 +14,7 @@ The RoomEQ Audio Processing API provides a comprehensive REST interface for micr
 - **Microphone Detection**: Automatic detection of USB and built-in microphones with sensitivity and gain information
 - **SPL Measurement**: Accurate sound pressure level measurement with calibrated microphones
 - **Signal Generation**: White noise and logarithmic sine sweep generation with keep-alive functionality
+- **Signal Generation**: White noise and logarithmic sine sweep generation with keep-alive functionality; optional SoX-based sweep generator
 - **Multiple Sweep Support**: Generate consecutive sine sweeps for acoustic averaging
 - **Audio Recording**: Background recording to WAV files with secure file management
 - **FFT Analysis**: Comprehensive spectral analysis of WAV files with windowing functions, normalization, logarithmic frequency summarization, peak detection, frequency band analysis, and improved Power Spectral Density calculation with proper window correction
@@ -289,6 +290,8 @@ For sine sweeps, additional fields are included:
 - `sweeps`: Number of consecutive sweeps
 - `sweep_duration`: Duration per sweep in seconds
 - `total_duration`: Total duration of all sweeps
+- `compensation_mode`: Amplitude compensation for native sweep generator (`"none" | "inv_sqrt_f" | "sqrt_f"`, default `"sqrt_f"`)
+- `generator`: Signal source used (`"native" | "sine_sox"`)
 
 ### Sine Sweep Generation
 
@@ -301,6 +304,8 @@ Start logarithmic sine sweep(s) with optional multiple repeat support.
 - `duration` (optional): Duration per sweep in seconds (1.0-30.0, default: 5.0)
 - `sweeps` (optional): Number of consecutive sweeps (1-10, default: 1)
 - `amplitude` (optional): Amplitude level (0.0-1.0, default: 0.5)
+- `compensation_mode` (optional): Amplitude compensation envelope for the native generator (`none | inv_sqrt_f | sqrt_f`, default: `sqrt_f`)
+- `generator` (optional): Signal generator implementation to use (`native | sine_sox`, default: `native`). When `sine_sox` is used, a temporary WAV is generated via SoX in `/tmp`, loaded, then deleted before playback.
 - `device` (optional): Output device (e.g., "hw:0,0"). Uses default if not specified
 
 **Example Requests:**
@@ -310,6 +315,9 @@ POST /audio/sweep/start?start_freq=20&end_freq=20000&duration=10&amplitude=0.4
 
 # Multiple sweeps for averaging - 3 consecutive sweeps
 POST /audio/sweep/start?start_freq=100&end_freq=8000&duration=5&sweeps=3&amplitude=0.3
+
+# Use SoX-based generator (creates a temp WAV in /tmp, then starts playback)
+POST /audio/sweep/start?start_freq=20&end_freq=20000&duration=8&sweeps=2&amplitude=0.3&generator=sine_sox
 ```
 
 **Response:**
@@ -323,11 +331,17 @@ POST /audio/sweep/start?start_freq=100&end_freq=8000&duration=5&sweeps=3&amplitu
   "sweeps": 3,
   "total_duration": 15.0,
   "amplitude": 0.3,
+    "compensation_mode": "sqrt_f",
+    "generator": "native",
   "device": "default",
   "stop_time": "2025-08-15T12:30:45.123456",
   "message": "3 sine sweep(s) started: 100.0 Hz → 8000.0 Hz, 5.0s each (total: 15.0s)"
 }
 ```
+
+**Behavior Notes:**
+- When `generator=sine_sox`, the server blocks until SoX has created the temporary WAV file and playback has started, then returns the response. The WAV file is removed after loading.
+- The `compensation_mode` parameter applies only to the native generator. The SoX generator uses SoX’s sine sweep synthesis without the internal compensation envelope.
 
 **Use Cases:**
 - **Room Response Analysis**: Full spectrum sweeps (20 Hz - 20 kHz)
@@ -759,6 +773,9 @@ curl -X POST "http://localhost:10315/audio/sweep/start?start_freq=100&end_freq=8
 
 # Focused frequency range for speaker testing
 curl -X POST "http://localhost:10315/audio/sweep/start?start_freq=200&end_freq=2000&duration=3&amplitude=0.5"
+
+# SoX-based sweep (uses SoX to synthesize, then plays the generated WAV)
+curl -X POST "http://localhost:10315/audio/sweep/start?start_freq=20&end_freq=20000&duration=8&sweeps=2&amplitude=0.3&generator=sine_sox"
 
 # Check sweep status (shows sweep details)
 curl "http://localhost:10315/audio/noise/status"
