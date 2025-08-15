@@ -16,7 +16,7 @@ The RoomEQ Audio Processing API provides a comprehensive REST interface for micr
 - **Signal Generation**: White noise and logarithmic sine sweep generation with keep-alive functionality
 - **Multiple Sweep Support**: Generate consecutive sine sweeps for acoustic averaging
 - **Audio Recording**: Background recording to WAV files with secure file management
-- **FFT Analysis**: Comprehensive spectral analysis of WAV files with windowing functions, peak detection, and frequency band analysis
+- **FFT Analysis**: Comprehensive spectral analysis of WAV files with windowing functions, normalization, logarithmic frequency summarization, peak detection, and frequency band analysis
 - **Real-time Control**: Start, stop, extend, and monitor audio operations through REST endpoints
 - **Cross-Origin Support**: CORS enabled for web application integration
 
@@ -348,6 +348,7 @@ Perform FFT (Fast Fourier Transform) spectral analysis on a WAV file.
 - `start_time` (float, optional): Start analysis at this time in seconds (default: 0)
 - `duration` (float, optional): Duration to analyze in seconds (default: entire file from start_time)
 - `normalize` (float, optional): Frequency in Hz to normalize to 0 dB (all other levels adjusted relative to this frequency)
+- `points_per_octave` (integer, optional): Summarize FFT into logarithmic frequency buckets (1-100, enables log frequency summarization)
 
 **Note:** Must specify either `filename` OR `filepath`, not both.
 
@@ -399,6 +400,105 @@ Perform FFT (Fast Fourier Transform) spectral analysis on a WAV file.
 }
 ```
 
+**Success Response with Logarithmic Frequency Summarization (when `points_per_octave` is specified):**
+```json
+{
+    "status": "success",
+    "file_info": {
+        "filename": "recording_20240101_120000.wav",
+        "original_metadata": {
+            "duration": 10.5,
+            "sample_rate": 44100,
+            "channels": 1,
+            "bit_depth": 16,
+            "total_samples": 463050
+        },
+        "analyzed_duration": 5.0,
+        "analyzed_samples": 220500,
+        "start_time": 2.0
+    },
+    "fft_analysis": {
+        "fft_size": 8192,
+        "window_type": "hann",
+        "sample_rate": 44100,
+        "frequency_resolution": 5.383,
+        "frequencies": [0, 5.383, 10.766, ...],
+        "magnitudes": [-80.5, -75.2, -82.1, ...],
+        "phases": [0.0, 1.57, -1.23, ...],
+        "peak_frequency": 1000.0,
+        "peak_magnitude": -20.5,
+        "spectral_centroid": 1250.5,
+        "log_frequency_summary": {
+            "frequencies": [20.0, 23.8, 28.3, 33.7, 40.1, 47.8, 56.8, 67.6, 80.4, 95.6, 113.8, 135.4, ...],
+            "magnitudes": [-65.2, -62.8, -58.4, -55.1, -52.3, -48.9, -45.2, -42.1, -38.8, -35.5, -32.2, -28.9, ...],
+            "points_per_octave": 16,
+            "frequency_range": [20.0, 20000.0],
+            "n_octaves": 10.0,
+            "n_points": 161,
+            "bin_details": [
+                {
+                    "center_freq": 20.0,
+                    "freq_range": [17.8, 22.4],
+                    "n_samples": 3,
+                    "mean_magnitude": -65.2,
+                    "min_magnitude": -67.1,
+                    "max_magnitude": -63.5
+                },
+                {
+                    "center_freq": 23.8,
+                    "freq_range": [21.2, 26.7],
+                    "n_samples": 4,
+                    "mean_magnitude": -62.8,
+                    "min_magnitude": -64.2,
+                    "max_magnitude": -61.1
+                }
+            ]
+        },
+        "frequency_bands": {
+            "sub_bass": {"range": "20-60 Hz", "avg_magnitude": -65.2, "peak_frequency": 45.0},
+            "bass": {"range": "60-250 Hz", "avg_magnitude": -45.8, "peak_frequency": 120.0},
+            "low_midrange": {"range": "250-500 Hz", "avg_magnitude": -35.1, "peak_frequency": 350.0},
+            "midrange": {"range": "500-2000 Hz", "avg_magnitude": -25.6, "peak_frequency": 1000.0},
+            "upper_midrange": {"range": "2000-4000 Hz", "avg_magnitude": -30.2, "peak_frequency": 2500.0},
+            "presence": {"range": "4000-6000 Hz", "avg_magnitude": -40.5, "peak_frequency": 5000.0},
+            "brilliance": {"range": "6000-20000 Hz", "avg_magnitude": -50.8, "peak_frequency": 8000.0}
+        },
+        "normalization": {
+            "applied": true,
+            "requested_freq": 1000.0,
+            "actual_freq": 1000.0,
+            "reference_level_db": -20.5
+        }
+    },
+    "timestamp": "2024-01-01T12:00:00"
+}
+```
+
+### Logarithmic Frequency Summarization
+
+When the `points_per_octave` parameter is specified, the FFT analysis includes an additional `log_frequency_summary` section that groups the high-resolution FFT data into logarithmically-spaced frequency buckets. This is particularly useful for acoustic analysis where human hearing and audio systems respond logarithmically to frequency.
+
+**Key Benefits:**
+- **Perceptual Relevance**: Matches human auditory perception (logarithmic frequency response)
+- **Data Reduction**: Reduces thousands of FFT bins to manageable number of points (typically 50-200)
+- **Consistent Resolution**: Same number of points per octave across the entire frequency range
+- **Analysis Friendly**: Perfect for room EQ, speaker analysis, and acoustic measurement applications
+
+**Typical Values:**
+- `points_per_octave=12`: 121 points from 20Hz to 20kHz (similar to 1/3 octave bands)
+- `points_per_octave=16`: 161 points (higher resolution, good for detailed analysis)
+- `points_per_octave=24`: 241 points (very high resolution for research applications)
+
+**Log Frequency Summary Fields:**
+- `frequencies`: Center frequencies of logarithmic bins
+- `magnitudes`: Mean magnitude in dB for each frequency bin
+- `points_per_octave`: Number of frequency points per octave
+- `frequency_range`: Actual frequency range covered [f_min, f_max]
+- `n_octaves`: Number of octaves in the analysis
+- `n_points`: Total number of frequency points in summary
+- `bin_details`: Detailed information about each frequency bin (optional, for debugging)
+```
+
 ### `/audio/analyze/fft-recording/<recording_id>` [POST]
 Perform FFT analysis on a specific recording by ID.
 
@@ -411,6 +511,7 @@ Perform FFT analysis on a specific recording by ID.
 - `start_time` (float, optional): Start analysis time in seconds
 - `duration` (float, optional): Duration to analyze in seconds
 - `normalize` (float, optional): Frequency in Hz to normalize to 0 dB
+- `points_per_octave` (integer, optional): Summarize FFT into logarithmic frequency buckets (1-100)
 
 **Success Response (200):**
 ```json
@@ -663,6 +764,38 @@ curl -X GET "http://localhost:10315/audio/record/download/abc12345" -o my_record
 curl -X DELETE "http://localhost:10315/audio/record/delete/abc12345"
 ```
 
+### FFT Analysis Examples
+
+```bash
+# Basic FFT analysis of recorded file
+curl -X POST "http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav"
+
+# FFT analysis with specific window function and normalization
+curl -X POST "http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&window=hamming&normalize=1000"
+
+# FFT analysis with logarithmic frequency summarization (16 points per octave)
+curl -X POST "http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&points_per_octave=16"
+
+# High-resolution log frequency analysis (24 points per octave) with normalization
+curl -X POST "http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&points_per_octave=24&normalize=1000&window=hann"
+
+# Analyze specific time segment with custom FFT size
+curl -X POST "http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&start_time=5&duration=10&fft_size=16384&points_per_octave=12"
+
+# Analyze external WAV file with log frequency summarization
+curl -X POST "http://localhost:10315/audio/analyze/fft?filepath=/path/to/measurement.wav&points_per_octave=16"
+
+# Direct analysis of recording by ID (with log frequency summary)
+curl -X POST "http://localhost:10315/audio/analyze/fft-recording/abc12345?points_per_octave=16&normalize=1000"
+```
+
+**Common points_per_octave values:**
+- `12`: Similar to 1/3 octave bands (121 points, 20Hz-20kHz)
+- `16`: Good balance of resolution and data size (161 points)
+- `24`: High resolution for detailed analysis (241 points)
+- `48`: Very high resolution for research (481 points)
+```
+
 ### Automated Measurement Sequence
 ```bash
 #!/bin/bash
@@ -687,13 +820,32 @@ sleep 50
 SPL_RESULT=$(curl -s "$API_URL/spl/measure?duration=5")
 echo "Ambient SPL measurement: $SPL_RESULT"
 
-# 4. Check recording status
+# 4. Check recording status and wait for completion
 RECORD_STATUS=$(curl -s "$API_URL/audio/record/status/$RECORDING_ID")
 echo "Recording status: $RECORD_STATUS"
 
-# 5. Download recording when complete
+# Wait for recording to complete
+while [[ $(echo "$RECORD_STATUS" | grep -o '"completed":[^,]*' | cut -d':' -f2) != "true" ]]; do
+    sleep 5
+    RECORD_STATUS=$(curl -s "$API_URL/audio/record/status/$RECORDING_ID")
+    echo "Waiting for recording to complete..."
+done
+
+# 5. Perform FFT analysis with logarithmic frequency summarization
+echo "Performing FFT analysis..."
+FFT_RESULT=$(curl -s -X POST "$API_URL/audio/analyze/fft-recording/$RECORDING_ID?points_per_octave=16&normalize=1000&window=hann")
+echo "FFT analysis completed with log frequency summary"
+
+# Extract key results from FFT analysis
+PEAK_FREQ=$(echo "$FFT_RESULT" | grep -o '"peak_frequency":[^,]*' | cut -d':' -f2)
+PEAK_MAG=$(echo "$FFT_RESULT" | grep -o '"peak_magnitude":[^,]*' | cut -d':' -f2)
+echo "Peak frequency: $PEAK_FREQ Hz at $PEAK_MAG dB"
+
+# 6. Download recording and save FFT results
 echo "Measurement sequence complete. Recording ID: $RECORDING_ID"
 echo "Download with: curl '$API_URL/audio/record/download/$RECORDING_ID' -o measurement.wav"
+echo "FFT results saved to fft_analysis.json"
+echo "$FFT_RESULT" > "fft_analysis_$RECORDING_ID.json"
 ```
 
 ### Web Application Integration
@@ -851,6 +1003,49 @@ class RoomEQController {
         return response.json();
     }
     
+    // FFT Analysis
+    async analyzeFFT(options = {}) {
+        const params = new URLSearchParams();
+        
+        if (options.filename) {
+            params.append('filename', options.filename);
+        } else if (options.filepath) {
+            params.append('filepath', options.filepath);
+        } else {
+            throw new Error('Must specify either filename or filepath');
+        }
+        
+        if (options.window) params.append('window', options.window);
+        if (options.fftSize) params.append('fft_size', options.fftSize);
+        if (options.startTime) params.append('start_time', options.startTime);
+        if (options.duration) params.append('duration', options.duration);
+        if (options.normalize) params.append('normalize', options.normalize);
+        if (options.pointsPerOctave) params.append('points_per_octave', options.pointsPerOctave);
+        
+        const response = await fetch(`${this.apiUrl}/audio/analyze/fft?${params}`, {
+            method: 'POST'
+        });
+        
+        return response.json();
+    }
+    
+    async analyzeRecordingFFT(recordingId, options = {}) {
+        const params = new URLSearchParams();
+        
+        if (options.window) params.append('window', options.window);
+        if (options.fftSize) params.append('fft_size', options.fftSize);
+        if (options.startTime) params.append('start_time', options.startTime);
+        if (options.duration) params.append('duration', options.duration);
+        if (options.normalize) params.append('normalize', options.normalize);
+        if (options.pointsPerOctave) params.append('points_per_octave', options.pointsPerOctave);
+        
+        const response = await fetch(`${this.apiUrl}/audio/analyze/fft-recording/${recordingId}?${params}`, {
+            method: 'POST'
+        });
+        
+        return response.json();
+    }
+    
     // SPL measurement
     async measureSPL(duration = 1.0, device = null) {
         const params = new URLSearchParams({
@@ -886,11 +1081,34 @@ class RoomEQController {
 // Usage examples
 const roomEQ = new RoomEQController();
 
-// Set recording completion callback
-roomEQ.onRecordingComplete = (recordingId, status) => {
+// Set recording completion callback with FFT analysis
+roomEQ.onRecordingComplete = async (recordingId, status) => {
     console.log(`Recording ${recordingId} completed: ${status.filename}`);
     
-    // Auto-download or process recording
+    // Perform FFT analysis with logarithmic frequency summarization
+    try {
+        const fftResult = await roomEQ.analyzeRecordingFFT(recordingId, {
+            pointsPerOctave: 16,
+            normalize: 1000,
+            window: 'hann'
+        });
+        
+        console.log('FFT Analysis Results:', {
+            peakFreq: fftResult.fft_analysis.peak_frequency,
+            peakMag: fftResult.fft_analysis.peak_magnitude,
+            logSummaryPoints: fftResult.fft_analysis.log_frequency_summary?.n_points
+        });
+        
+        // Process log frequency data for visualization
+        if (fftResult.fft_analysis.log_frequency_summary) {
+            const logData = fftResult.fft_analysis.log_frequency_summary;
+            console.log(`Log frequency analysis: ${logData.n_points} points over ${logData.n_octaves} octaves`);
+        }
+    } catch (error) {
+        console.error('FFT analysis failed:', error);
+    }
+    
+    // Auto-download recording
     roomEQ.downloadRecording(recordingId);
 };
 
