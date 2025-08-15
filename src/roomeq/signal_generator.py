@@ -98,9 +98,20 @@ class SignalGenerator:
         """
         t = np.linspace(0, duration_samples / self.sample_rate, duration_samples, False)
         
-        # Generate logarithmic sweep
-        sweep = np.sin(2 * np.pi * start_freq * (end_freq / start_freq) ** (t / (duration_samples / self.sample_rate)) * t / np.log(end_freq / start_freq))
-        sweep *= amplitude
+        # Generate logarithmic sweep with proper formula for constant power
+        # The correct logarithmic chirp formula maintains constant power across frequencies
+        # f(t) = f0 * (f1/f0)^(t/T)
+        # φ(t) = 2π * f0 * T/ln(f1/f0) * ((f1/f0)^(t/T) - 1)
+        
+        duration_sec = duration_samples / self.sample_rate
+        frequency_ratio = end_freq / start_freq
+        log_ratio = np.log(frequency_ratio)
+        
+        # Calculate instantaneous phase for logarithmic sweep
+        phase = 2 * np.pi * start_freq * duration_sec / log_ratio * (frequency_ratio ** (t / duration_sec) - 1)
+        
+        # Generate the sweep with constant amplitude
+        sweep = np.sin(phase) * amplitude
         
         # Convert to stereo if needed
         if self.channels == 2:
