@@ -760,6 +760,8 @@ def start_sine_sweep():
         start_freq_str = request.args.get("start_freq", "20")
         end_freq_str = request.args.get("end_freq", "20000")
         sweeps_str = request.args.get("sweeps", "1")
+        compensation_mode = request.args.get("compensation_mode", "sqrt_f").lower()
+        generator_mode = request.args.get("generator", "native").lower()  # 'native' or 'sine_sox'
         device = request.args.get("device")
         
         duration = validate_float_param("duration", duration_str, 1.0, 30.0)
@@ -776,7 +778,15 @@ def start_sine_sweep():
         
         if start_freq >= end_freq:
             abort(400, "start_freq must be less than end_freq")
+        # Validate compensation mode
+        valid_modes = {"none", "inv_sqrt_f", "sqrt_f"}
+        if compensation_mode not in valid_modes:
+            abort(400, f"compensation_mode must be one of {sorted(valid_modes)}")
         
+        # Validate generator mode
+        if generator_mode not in {"native", "sine_sox"}:
+            abort(400, "generator must be 'native' or 'sine_sox'")
+
         # Calculate total duration
         total_duration = duration * sweeps
         
@@ -802,17 +812,41 @@ def start_sine_sweep():
             'end_freq': end_freq,
             'sweeps': sweeps,
             'sweep_duration': duration,
-            'total_duration': total_duration
+            'total_duration': total_duration,
+            'compensation_mode': compensation_mode,
+            'generator': generator_mode
         })
         
-        # Start playing multiple sine sweeps
-        _signal_generator.play_sine_sweep(
-            start_freq=start_freq,
-            end_freq=end_freq,
-            duration=duration,
-            amplitude=amplitude,
-            repeats=sweeps
-        )
+        # Start playing multiple sine sweeps with selected generator
+        started = False
+        if generator_mode == 'sine_sox':
+            # For SoX path, we don't apply compensation_mode; SoX generates the sweep audio
+            started = _signal_generator.play_sine_sweep_sox(
+                start_freq=start_freq,
+                end_freq=end_freq,
+                duration=duration,
+                amplitude=amplitude,
+                repeats=sweeps,
+                sox_delay=0.0
+            )
+        else:
+            started = _signal_generator.play_sine_sweep(
+                start_freq=start_freq,
+                end_freq=end_freq,
+                duration=duration,
+                amplitude=amplitude,
+                repeats=sweeps,
+                compensation_mode=compensation_mode
+            )
+
+        # Ensure playback thread has started before returning
+        if not started:
+            abort(500, "Failed to start sweep playback")
+        # Wait briefly to ensure PCM started; poll is_playing for up to ~0.5s
+        for _ in range(10):
+            if _signal_generator.is_playing():
+                break
+            time.sleep(0.05)
         
         # Start monitor thread
         monitor_thread = threading.Thread(target=_monitor_playback, daemon=True)
@@ -829,7 +863,9 @@ def start_sine_sweep():
             "sweeps": sweeps,
             "total_duration": total_duration,
             "amplitude": amplitude,
+            "compensation_mode": compensation_mode,
             "device": device or "default",
+            "generator": generator_mode,
             "stop_time": stop_time.isoformat(),
             "message": f"{sweeps} sine sweep(s) started: {start_freq} Hz → {end_freq} Hz, {duration}s each (total: {total_duration}s)"
         })
@@ -985,7 +1021,9 @@ def get_noise_status():
             "end_freq": _playback_state['end_freq'],
             "sweeps": _playback_state['sweeps'],
             "sweep_duration": _playback_state['sweep_duration'],
-            "total_duration": _playback_state['total_duration']
+            "total_duration": _playback_state['total_duration'],
+            "compensation_mode": _playback_state.get('compensation_mode', 'sqrt_f'),
+            "generator": _playback_state.get('generator', 'native')
         })
     
     return jsonify(status)
@@ -1084,9 +1122,11 @@ def root():
                     "end_freq": "Ending frequency in Hz (10-22000, default: 20000)", 
                     "duration": "Sweep duration in seconds (1.0-30.0, default: 5.0)",
                     "amplitude": "Amplitude level (0.0-1.0, default: 0.5)",
+                    "compensation_mode": "Amplitude compensation ('none' | 'inv_sqrt_f' | 'sqrt_f', default: 'sqrt_f')",
+                    "generator": "Signal source ('native' | 'sine_sox', default: 'native')",
                     "device": "Output device (optional, auto-detects if not specified)"
                 },
-                "example": "curl -X POST 'http://localhost:10315/audio/sweep/start?start_freq=20&end_freq=20000&duration=10&amplitude=0.4'"
+                "example": "curl -X POST 'http://localhost:10315/audio/sweep/start?start_freq=20&end_freq=20000&duration=10&amplitude=0.4&compensation_mode=none'"
             },
             "sine_sweep_multiple": {
                 "description": "Generate multiple consecutive sine sweeps for averaging",
@@ -1098,9 +1138,26 @@ def root():
                     "duration": "Duration per sweep in seconds (1.0-30.0, default: 5.0)", 
                     "sweeps": "Number of consecutive sweeps (1-10, default: 1)",
                     "amplitude": "Amplitude level (0.0-1.0, default: 0.5)",
+                    "compensation_mode": "Amplitude compensation ('none' | 'inv_sqrt_f' | 'sqrt_f', default: 'sqrt_f')",
+                    "generator": "Signal source ('native' | 'sine_sox', default: 'native')",
                     "device": "Output device (optional, auto-detects if not specified)"
                 },
-                "example": "curl -X POST 'http://localhost:10315/audio/sweep/start?start_freq=20&end_freq=20000&duration=8&sweeps=3&amplitude=0.3'"
+                "example": "curl -X POST 'http://localhost:10315/audio/sweep/start?start_freq=20&end_freq=20000&duration=8&sweeps=3&amplitude=0.3&compensation_mode=none'",
+            },
+            "sine_sweep_sox": {
+                "description": "Generate sine sweep using SoX (creates a temp WAV in /tmp, then plays it)",
+                "method": "POST",
+                "url": "/audio/sweep/start",
+                "parameters": {
+                    "start_freq": "Starting frequency in Hz (10-22000, default: 20)",
+                    "end_freq": "Ending frequency in Hz (10-22000, default: 20000)",
+                    "duration": "Sweep duration in seconds (1.0-30.0, default: 5.0)",
+                    "amplitude": "Amplitude level (0.0-1.0, default: 0.5)",
+                    "sweeps": "Number of consecutive sweeps (1-10, default: 1)",
+                    "generator": "Must be 'sine_sox' to use SoX-based generator",
+                    "device": "Output device (optional)"
+                },
+                "example": "curl -X POST 'http://localhost:10315/audio/sweep/start?start_freq=20&end_freq=20000&duration=8&sweeps=2&amplitude=0.3&generator=sine_sox'"
             },
             "keep_alive": {
                 "description": "Extend current playback to prevent automatic stop",
@@ -1199,7 +1256,9 @@ def root():
                     "end_freq": 20000.0,
                     "sweeps": 3,
                     "sweep_duration": 8.0,
-                    "total_duration": 24.0
+                    "total_duration": 24.0,
+                    "compensation_mode": "sqrt_f",
+                    "generator": "native"
                 }
             },
             "recording_status": {

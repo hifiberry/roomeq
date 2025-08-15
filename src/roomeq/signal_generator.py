@@ -10,6 +10,11 @@ import threading
 import signal
 import sys
 import logging
+import subprocess
+import tempfile
+import os
+import wave
+import uuid
 from typing import Optional
 import numpy as np
 import alsaaudio
@@ -82,7 +87,7 @@ class SignalGenerator:
         
         return samples
     
-    def _generate_sine_sweep(self, f_start, f_end, duration_samples, amplitude):
+    def _generate_sine_sweep(self, f_start, f_end, duration_samples, amplitude, compensation_mode: str = 'inv_sqrt_f'):
         """
         Generate a logarithmic sine sweep with proper amplitude normalization.
         
@@ -92,9 +97,10 @@ class SignalGenerator:
         For logarithmic sweeps, the frequency follows:
         f(t) = f_start * (f_end/f_start)^(t/T)
         
-        For constant amplitude in frequency domain (flat frequency response),
-        the time-domain amplitude must be adjusted by 1/sqrt(f) to compensate
-        for the logarithmic frequency distribution.
+        Compensation modes:
+            - 'none': constant amplitude envelope
+            - 'inv_sqrt_f': A ∝ 1/sqrt(f) (historical default)
+            - 'sqrt_f': A ∝ sqrt(f) (useful for PSD/Hz flatness displays)
         
         Args:
             f_start: Starting frequency in Hz
@@ -127,17 +133,31 @@ class SignalGenerator:
             # Linear case when f_start ≈ f_end
             phase = 2 * np.pi * f_start * t
         
-        # Generate basic sine sweep
+        # Generate basic sine sweep (unit amplitude)
         signal = np.sin(phase)
-        
-        # Apply amplitude normalization for flat frequency response
-        # The amplitude must decrease with increasing frequency to compensate
-        # for the logarithmic time distribution
-        # Use 1/sqrt(f) compensation as recommended for spectral flatness
-        amplitude_compensation = np.sqrt(f_start / instantaneous_freq)
-        
+
+        # Amplitude compensation envelope
+        comp = np.ones_like(signal)
+        mode = (compensation_mode or 'inv_sqrt_f').lower()
+        if mode == 'inv_sqrt_f':
+            # A ∝ 1/sqrt(f)
+            comp = np.sqrt(np.maximum(f_start, 1e-9) / np.maximum(instantaneous_freq, 1e-9))
+        elif mode == 'sqrt_f':
+            # A ∝ sqrt(f)
+            comp = np.sqrt(np.maximum(instantaneous_freq, 1e-9) / np.maximum(f_start, 1e-9))
+        elif mode == 'none':
+            comp = np.ones_like(signal)
+        else:
+            logger.warning(f"Unknown compensation_mode '{compensation_mode}', using 'inv_sqrt_f'")
+            comp = np.sqrt(np.maximum(f_start, 1e-9) / np.maximum(instantaneous_freq, 1e-9))
+
+        # Normalize envelope to keep peak at 1.0 before applying amplitude
+        comp_max = float(np.max(np.abs(comp))) if comp.size else 1.0
+        if comp_max > 0:
+            comp = comp / comp_max
+
         # Apply amplitude and compensation
-        signal = signal * amplitude * amplitude_compensation
+        signal = signal * (amplitude * comp)
         
         # Apply fade-in and fade-out to reduce spectral artifacts
         fade_samples = int(0.01 * self.sample_rate)  # 10ms fade
@@ -150,7 +170,14 @@ class SignalGenerator:
             fade_out = np.linspace(1, 0, fade_samples)
             signal[-fade_samples:] *= fade_out
         
-        return signal
+        # Convert to stereo if needed
+        if self.channels == 2:
+            signal = np.column_stack((signal, signal))
+        
+        # Convert to S16_LE format
+        samples = (signal * 32767).astype(np.int16)
+        
+        return samples
 
     def _playback_worker(self, samples: np.ndarray, loop: bool = False, continuous_noise: bool = False, amplitude: float = 0.5):
         """
@@ -257,7 +284,8 @@ class SignalGenerator:
             return False
     
     def play_sine_sweep(self, start_freq: float = 20, end_freq: float = 20000, 
-                       duration: float = 10, amplitude: float = 0.5, repeats: int = 1):
+                       duration: float = 10, amplitude: float = 0.5, repeats: int = 1,
+                       compensation_mode: str = 'none'):
         """
         Play sine sweep (logarithmic).
         
@@ -267,6 +295,7 @@ class SignalGenerator:
             duration: Duration in seconds (default: 10)
             amplitude: Amplitude scaling (0.0 to 1.0)
             repeats: Number of times to repeat the sweep (default: 1)
+            compensation_mode: Amplitude compensation envelope ('none' | 'inv_sqrt_f' | 'sqrt_f')
             
         Returns:
             True if started successfully
@@ -285,7 +314,7 @@ class SignalGenerator:
                 print(f"Playing {repeats} sine sweeps: {start_freq} Hz → {end_freq} Hz, {duration}s each (total: {total_duration}s) at {amplitude:.1%} amplitude...")
             
             # Generate single sweep samples
-            single_sweep = self._generate_sine_sweep(start_freq, end_freq, duration_samples, amplitude)
+            single_sweep = self._generate_sine_sweep(start_freq, end_freq, duration_samples, amplitude, compensation_mode=compensation_mode)
             
             # If multiple repeats, concatenate the sweep samples
             if repeats > 1:
@@ -332,6 +361,134 @@ class SignalGenerator:
         if self.playback_thread:
             self.playback_thread.join()
 
+    def play_sine_sweep_sox(self, start_freq: float = 20, end_freq: float = 20000,
+                             duration: float = 10, amplitude: float = 0.5, repeats: int = 1,
+                             sox_delay: float = 0.0) -> bool:
+        """
+        Generate a sine sweep WAV via SoX in /tmp and play it.
+
+        The WAV file is deleted after being loaded into memory.
+
+        Args:
+            start_freq: Start frequency in Hz
+            end_freq: End frequency in Hz
+            duration: Sweep duration in seconds
+            amplitude: Linear amplitude scaling (0.0-1.0)
+            repeats: Number of times to repeat during playback
+            sox_delay: Optional leading silence in seconds added by SoX (default 0.0)
+
+        Returns:
+            True if playback started
+        """
+        if self.playback_thread and self.playback_thread.is_alive():
+            logger.warning("Playback already active. Stop current playback first.")
+            return False
+
+        # Build temp file path
+        tmp_path = os.path.join('/tmp', f"roomeq_sweep_{uuid.uuid4().hex}.wav")
+        try:
+            # Compose SoX command
+            # Example: sox -q -c 2 -n -r 48000 -b 16 /tmp/file.wav synth 10 sine 20/20000 vol 0.5 delay 1
+            cmd = [
+                'sox', '-q',
+                '-c', str(self.channels),
+                '-n',
+                '-r', str(self.sample_rate),
+                '-b', '16',
+                tmp_path,
+                'synth', f"{duration}", 'sine', f"{start_freq}/{end_freq}"
+            ]
+            # Apply amplitude via SoX volume effect (linear gain)
+            if amplitude is not None and amplitude >= 0.0:
+                cmd += ['vol', f"{float(amplitude):.6f}"]
+            # Optional delay
+            if sox_delay and sox_delay > 0:
+                cmd += ['delay', f"{float(sox_delay):.6f}"]
+
+            logger.debug(f"Running SoX command: {' '.join(cmd)}")
+            # Run SoX synchronously; raise if it fails
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            # Verify file exists and has content
+            if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
+                logger.error("SoX did not create output file or file is empty")
+                return False
+
+            # Load WAV into memory as int16 numpy array
+            with wave.open(tmp_path, 'rb') as wf:
+                wf_channels = wf.getnchannels()
+                sampwidth = wf.getsampwidth()
+                framerate = wf.getframerate()
+                nframes = wf.getnframes()
+
+                if sampwidth != 2:
+                    logger.warning(f"Expected 16-bit WAV from SoX, got {sampwidth*8}-bit")
+
+                raw = wf.readframes(nframes)
+                data = np.frombuffer(raw, dtype=np.int16)
+
+                if wf_channels > 1:
+                    data = data.reshape(-1, wf_channels)
+                else:
+                    # Mono -> optionally duplicate to stereo depending on configured channels
+                    if self.channels == 2:
+                        data = np.column_stack((data, data))
+                    else:
+                        # Keep as mono array shape (N,)
+                        pass
+
+            # Clean up temp file immediately after loading
+            try:
+                os.remove(tmp_path)
+            except Exception as e:
+                logger.debug(f"Failed to remove temp WAV {tmp_path}: {e}")
+
+            # Handle repeats by tiling the sample frames
+            if repeats and repeats > 1:
+                if data.ndim == 2:
+                    data = np.tile(data, (repeats, 1))
+                else:
+                    data = np.tile(data, repeats)
+
+            # Start playback in separate thread
+            self.stop_playback = False
+            self.playback_thread = threading.Thread(
+                target=self._playback_worker,
+                args=(data, False),
+                daemon=True
+            )
+            self.playback_thread.start()
+
+            # Optionally wait a brief moment to ensure the thread is running
+            time.sleep(0.05)
+            return True
+
+        except FileNotFoundError:
+            logger.error("SoX is not installed or not found in PATH. Please install 'sox'.")
+            # Best effort cleanup
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+            return False
+        except subprocess.CalledProcessError as e:
+            logger.error(f"SoX command failed: {e.stderr.decode('utf-8', errors='ignore')}")
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+            return False
+        except Exception as e:
+            logger.error(f"Failed to start SoX-based sweep playback: {e}")
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+            return False
+
 
 def main():
     """Command-line interface for signal generator."""
@@ -361,6 +518,8 @@ def main():
                             help='Duration in seconds (default: 10)')
     sweep_parser.add_argument('-a', '--amplitude', type=float, default=0.5,
                             help='Amplitude 0.0-1.0 (default: 0.5)')
+    sweep_parser.add_argument('-c', '--compensation-mode', type=str, default='none', choices=['none', 'inv_sqrt_f', 'sqrt_f'],
+                            help="Amplitude compensation envelope ('none' | 'inv_sqrt_f' | 'sqrt_f'). Default: 'none'")
     
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     
@@ -392,10 +551,11 @@ def main():
         
         elif args.command == 'sweep':
             if generator.play_sine_sweep(
-                start_freq=args.start, 
-                end_freq=args.end, 
-                duration=args.time, 
-                amplitude=args.amplitude
+                start_freq=args.start,
+                end_freq=args.end,
+                duration=args.time,
+                amplitude=args.amplitude,
+                compensation_mode=getattr(args, 'compensation_mode', 'none')
             ):
                 generator.wait_for_completion()
         

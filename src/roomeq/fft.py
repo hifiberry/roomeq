@@ -286,6 +286,162 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
         raise RuntimeError(f"FFT computation failed: {str(e)}")
 
 
+def compute_fft_time_averaged(audio_data: np.ndarray, sample_rate: int, window_type: str = 'hann',
+                              fft_size: int = None, overlap: float = 0.5, normalize: float = None,
+                              points_per_octave: int = None) -> Dict:
+    """
+    Compute a time-averaged FFT over multiple overlapping windows (Welch-style averaging).
+
+    This method is better suited for wideband, time-varying signals (e.g., sine sweeps),
+    providing a stable estimate of overall frequency content across the full duration.
+
+    Args:
+        audio_data: Normalized audio data [-1, 1]
+        sample_rate: Sample rate in Hz
+        window_type: Window function ('hann', 'hamming', 'blackman', 'none')
+        fft_size: FFT size (power of 2). If None, choose a reasonable size (<= 65536)
+        overlap: Fractional overlap between segments (0.0 - 0.95)
+        normalize: Frequency in Hz to normalize to 0 dB, None for no normalization
+        points_per_octave: If specified, summarize into log frequency buckets
+
+    Returns:
+        Dict with averaged FFT results similar to compute_fft(), plus segment metadata
+    """
+    try:
+        x = audio_data.astype(np.float32, copy=False)
+        n = len(x)
+
+        if fft_size is None:
+            target = min(32768, n)
+            fft_size = 1 << int(np.floor(np.log2(target)))
+            fft_size = max(1024, min(fft_size, 65536))
+
+        # Window
+        win_len = fft_size
+        if window_type == 'hann':
+            window = np.hanning(win_len)
+        elif window_type == 'hamming':
+            window = np.hamming(win_len)
+        elif window_type == 'blackman':
+            window = np.blackman(win_len)
+        elif window_type == 'none' or window_type == 'rectangular':
+            window = np.ones(win_len)
+        else:
+            window = np.hanning(win_len)
+
+        # Hop size
+        overlap = float(np.clip(overlap, 0.0, 0.95))
+        hop = max(1, int(win_len * (1.0 - overlap)))
+        if hop <= 0:
+            hop = 1
+
+        # If signal is shorter than one window, zero-pad
+        if n < win_len:
+            padded = np.zeros(win_len, dtype=np.float32)
+            padded[:n] = x
+            x = padded
+            n = win_len
+
+        # Precompute window power and frequency axis
+        window_power_sum = float(np.sum(window**2))
+        window_sum = float(np.sum(window))
+        frequencies = np.fft.rfftfreq(win_len, 1.0 / sample_rate)
+
+        # Accumulate power spectrum across segments
+        acc_power = np.zeros(len(frequencies), dtype=np.float64)
+        seg_count = 0
+
+        for start in range(0, n - win_len + 1, hop):
+            seg = x[start:start + win_len]
+            seg_win = seg * window
+            fft_result = np.fft.rfft(seg_win)
+            mag = np.abs(fft_result)
+
+            # Single-sided scaling
+            if len(mag) > 1:
+                mag[1:] *= 2
+                if win_len % 2 == 0 and len(mag) > 1:
+                    mag[-1] /= 2
+
+            # Normalize by window power for amplitude, then power
+            mag = mag / np.sqrt(window_power_sum)
+            power = mag * mag
+            acc_power += power
+            seg_count += 1
+
+        if seg_count == 0:
+            return compute_fft(audio_data, sample_rate, window_type, fft_size, normalize, points_per_octave)
+
+        avg_power = acc_power / seg_count
+
+        # Convert power to dB
+        with np.errstate(divide='ignore', invalid='ignore'):
+            magnitude_db = 10 * np.log10(avg_power + 1e-20)
+            magnitude_db[~np.isfinite(magnitude_db)] = -np.inf
+
+        # Normalization (optional)
+        normalization_info = {"applied": False}
+        if normalize is not None:
+            normalize_idx = int(np.argmin(np.abs(frequencies - normalize)))
+            normalize_level_db = float(magnitude_db[normalize_idx])
+            magnitude_db = magnitude_db - normalize_level_db
+            normalization_info = {
+                "requested_freq": float(normalize),
+                "actual_freq": float(frequencies[normalize_idx]),
+                "reference_level_db": normalize_level_db,
+                "applied": True
+            }
+
+        # ENBW (informational)
+        enbw = sample_rate * window_power_sum / (window_sum**2)
+
+        # Peak stats
+        max_idx = int(np.argmax(magnitude_db))
+        peak_frequency = float(frequencies[max_idx])
+        peak_magnitude = float(magnitude_db[max_idx])
+
+        result = {
+            'fft_size': int(win_len),
+            'window_type': window_type,
+            'sample_rate': int(sample_rate),
+            'frequency_resolution': float(sample_rate / win_len),
+            'frequencies': frequencies.tolist(),
+            'magnitudes': magnitude_db.tolist(),
+            'phases': [0.0] * len(frequencies),
+            'peak_frequency': peak_frequency,
+            'peak_magnitude': peak_magnitude,
+            'spectral_centroid': float(np.sum(frequencies * avg_power) / (np.sum(avg_power) + 1e-20)),
+            'frequency_bands': {},
+            'normalization': normalization_info,
+            'spectral_density': {
+                'type': 'Averaged Power Spectrum',
+                'units': 'dB re FS (power)',
+                'description': 'Time-averaged spectrum over overlapping windows',
+                'enbw_hz': float(enbw),
+                'window_correction_applied': True,
+                'n_segments': int(seg_count),
+                'overlap': float(overlap)
+            }
+        }
+
+        if points_per_octave is not None:
+            try:
+                log_summary = summarize_fft_log_frequency(
+                    frequencies, magnitude_db, points_per_octave
+                )
+                result['log_frequency_summary'] = log_summary
+            except Exception as e:
+                result['log_frequency_summary'] = {
+                    'error': f"Summarization failed: {str(e)}",
+                    'points_per_octave': points_per_octave
+                }
+
+        return result
+
+    except Exception as e:
+        raise RuntimeError(f"Time-averaged FFT computation failed: {str(e)}")
+
+
 def analyze_wav_file(filepath: str, window_type: str = 'hann', fft_size: int = None,
                      start_time: float = 0.0, duration: float = None, normalize: float = None, 
                      points_per_octave: int = None) -> Dict:
@@ -440,24 +596,21 @@ def summarize_fft_log_frequency(frequencies: np.ndarray, magnitudes: np.ndarray,
             # Find FFT bins within this range (from C code logic)
             start_bin_idx = int(fr_start / freq_resolution + 0.5)
             
-            # Accumulate magnitudes from FFT bins in this range
-            sum_magnitude_linear = 0.0
-            count = 0
+            # Accumulate total power in this logarithmic frequency band
+            sum_power = 0.0
             bin_idx = start_bin_idx
             
             # Process all FFT bins that fall within this logarithmic bin range
             while bin_idx < len(frequencies) and frequencies[bin_idx] < fr_end:
                 if bin_idx < len(magnitudes):
-                    # Convert from dB to linear for proper averaging
-                    linear_magnitude = 10**(magnitudes[bin_idx] / 20.0)
-                    sum_magnitude_linear += linear_magnitude
-                    count += 1
+                    # Convert dB magnitude to power (linear)
+                    power_linear = 10**(magnitudes[bin_idx] / 10.0)
+                    sum_power += power_linear
                 bin_idx += 1
             
-            if count > 0:
-                # Average in linear space, then convert back to dB (proper way)
-                avg_linear = sum_magnitude_linear / count
-                avg_magnitude_db = 20 * np.log10(avg_linear + 1e-20)
+            if sum_power > 0:
+                # Total power in the logarithmic band
+                avg_magnitude_db = 10 * np.log10(sum_power + 1e-20)
             else:
                 # No data in this bin
                 avg_magnitude_db = -100.0
@@ -474,10 +627,10 @@ def summarize_fft_log_frequency(frequencies: np.ndarray, magnitudes: np.ndarray,
             bin_info.append({
                 "center_freq": float(log_avg_freq),
                 "freq_range": [float(fr_start), float(fr_end)],
-                "n_samples": count,
+                "band_power_linear": float(10**(avg_magnitude_db / 10.0)) if avg_magnitude_db > -1e9 else 0.0,
                 "mean_magnitude": float(avg_magnitude_db),
-                "min_magnitude": float(avg_magnitude_db),  # Not calculated in C version
-                "max_magnitude": float(avg_magnitude_db)   # Not calculated in C version
+                "min_magnitude": float(avg_magnitude_db),
+                "max_magnitude": float(avg_magnitude_db)
             })
         
         return {
