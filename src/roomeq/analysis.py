@@ -72,26 +72,56 @@ class AudioAnalyzer:
             return None, None
     
     def record_audio(self, duration_seconds=1.0):
-        # For alsaaudio 0.8, use positional parameters and set properties after creation
-        pcm = alsaaudio.PCM(alsaaudio.PCM_CAPTURE, alsaaudio.PCM_NORMAL, self.device)
-        pcm.setchannels(self.channels)
-        pcm.setrate(self.sample_rate)
-        pcm.setformat(self.format_type)
-        pcm.setperiodsize(1024)
+        """
+        Record audio using arecord as a workaround for alsaaudio PY_SSIZE_T_CLEAN issue.
+        This is more reliable than the alsaaudio PCM.read() method.
+        """
+        import subprocess
+        import tempfile
+        import os
         
-        total_samples = int(self.sample_rate * duration_seconds)
-        samples_collected = 0
-        audio_data = []
+        # Create a temporary file for the recording
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
+            temp_path = tmp_file.name
         
-        while samples_collected < total_samples:
-            length, data = pcm.read()
-            if length > 0:
-                samples = np.frombuffer(data, dtype=np.int16)
-                audio_data.extend(samples.tolist())
-                samples_collected += len(samples)
-        
-        pcm.close()
-        return np.array(audio_data, dtype=np.int16)
+        try:
+            # Calculate exact number of samples needed
+            total_samples = int(self.sample_rate * duration_seconds)
+            
+            # Use arecord to capture audio with exact sample count
+            cmd = [
+                'arecord',
+                '-D', self.device,
+                '-f', 'S16_LE',
+                '-c', str(self.channels),
+                '-r', str(self.sample_rate),
+                '-s', str(total_samples),  # Use sample count instead of duration
+                temp_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=duration_seconds + 5)
+            
+            if result.returncode != 0:
+                raise RuntimeError(f"arecord failed: {result.stderr}")
+            
+            # Read the recorded WAV file
+            import wave
+            with wave.open(temp_path, 'rb') as wav_file:
+                frames = wav_file.readframes(-1)
+                audio_data = np.frombuffer(frames, dtype=np.int16)
+            
+            return audio_data
+            
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"Recording timeout after {duration_seconds + 5} seconds")
+        except Exception as e:
+            raise RuntimeError(f"Failed to record audio: {str(e)}")
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
     
     def calculate_rms_db(self, samples):
         if len(samples) == 0:
