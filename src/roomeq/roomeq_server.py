@@ -3,21 +3,31 @@ from flask import Flask, jsonify, request, abort, send_file
 from flask_cors import CORS
 from typing import List, Dict, Any, Optional
 import logging
-import threading
 import time
-import tempfile
-import os
-import subprocess
-import uuid
 import numpy as np
 import wave
 import signal
 import sys
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
 # Local imports
 from roomeq.fft import load_wav_file, compute_fft, analyze_wav_file, validate_fft_parameters
+from roomeq.recording import (
+    recording_manager, 
+    start_recording, 
+    get_recording_status,
+    list_recordings,
+    delete_recording,
+    delete_recording_file,
+    validate_recording_file,
+    cleanup_old_recordings,
+    start_cleanup_timer,
+    stop_cleanup_timer,
+    get_cleanup_status,
+    signal_handler as recording_signal_handler
+)
 
 from .microphone import MicrophoneDetector, detect_microphones
 from .analysis import measure_spl
@@ -42,12 +52,6 @@ _playback_state = {
     'total_duration': None
 }
 
-# Global recording state and file management
-_temp_dir = tempfile.mkdtemp(prefix="roomeq_recordings_")
-_active_recordings = {}  # {recording_id: {"thread": thread, "filename": filename, "status": status}}
-_completed_recordings = {}  # {recording_id: {"filename": filename, "timestamp": datetime, "duration": float}}
-_cleanup_timer = None
-
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
@@ -71,168 +75,6 @@ def validate_float_param(param_name: str, value: str, min_val: float = None, max
         return val
     except ValueError:
         abort(400, f"Invalid {param_name}: must be a number")
-
-
-def _recording_worker(recording_id: str, device: str, duration: float, sample_rate: int = 48000):
-    """Background worker for audio recording."""
-    global _active_recordings, _completed_recordings
-    
-    filename = f"recording_{recording_id}.wav"
-    filepath = os.path.join(_temp_dir, filename)
-    
-    try:
-        logger.info(f"Starting recording {recording_id}: {duration}s on device {device}")
-        
-        # Update status to recording
-        _active_recordings[recording_id]["status"] = "recording"
-        
-        # Use arecord to capture audio
-        cmd = [
-            'arecord',
-            '-D', device,
-            '-f', 'S16_LE',
-            '-c', '1',  # Mono recording
-            '-r', str(sample_rate),
-            '-d', str(int(duration)) if duration == int(duration) else str(duration),
-            filepath
-        ]
-        
-        start_time = datetime.now()
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=duration + 10)
-        end_time = datetime.now()
-        
-        if result.returncode == 0:
-            # Recording successful
-            actual_duration = (end_time - start_time).total_seconds()
-            
-            # Move to completed recordings
-            _completed_recordings[recording_id] = {
-                "filename": filename,
-                "filepath": filepath,
-                "timestamp": start_time,
-                "duration": actual_duration,
-                "device": device,
-                "sample_rate": sample_rate
-            }
-            
-            logger.info(f"Recording {recording_id} completed successfully: {actual_duration:.1f}s")
-            
-        else:
-            logger.error(f"Recording {recording_id} failed: {result.stderr}")
-            # Clean up failed recording file
-            try:
-                os.unlink(filepath)
-            except:
-                pass
-                
-    except subprocess.TimeoutExpired:
-        logger.error(f"Recording {recording_id} timed out")
-        try:
-            os.unlink(filepath)
-        except:
-            pass
-    except Exception as e:
-        logger.error(f"Recording {recording_id} error: {e}")
-        try:
-            os.unlink(filepath)
-        except:
-            pass
-    finally:
-        # Remove from active recordings
-        if recording_id in _active_recordings:
-            del _active_recordings[recording_id]
-
-
-def _validate_recording_file(filename: str) -> str:
-    """Validate and sanitize recording filename for security."""
-    # Only allow wav files
-    if not filename.endswith('.wav'):
-        abort(400, "Only WAV files are allowed")
-    
-    # Remove any path components for security
-    filename = os.path.basename(filename)
-    
-    # Check if file exists in temp directory
-    filepath = os.path.join(_temp_dir, filename)
-    if not os.path.exists(filepath):
-        abort(404, "Recording file not found")
-    
-    # Ensure file is actually in our temp directory (prevent directory traversal)
-    try:
-        real_temp = os.path.realpath(_temp_dir)
-        real_file = os.path.realpath(filepath)
-        if not real_file.startswith(real_temp):
-            abort(403, "Access denied")
-    except:
-        abort(403, "Access denied")
-    
-    return filepath
-
-
-def _cleanup_old_recordings():
-    """Clean up recordings older than 10 minutes."""
-    global _completed_recordings
-    
-    cutoff_time = datetime.now() - timedelta(minutes=10)
-    recordings_to_remove = []
-    
-    logger.info("Running cleanup job for old recordings")
-    
-    for recording_id, recording in _completed_recordings.items():
-        if recording["timestamp"] < cutoff_time:
-            recordings_to_remove.append(recording_id)
-    
-    for recording_id in recordings_to_remove:
-        try:
-            recording = _completed_recordings[recording_id]
-            filepath = recording["filepath"]
-            
-            # Remove the file
-            if os.path.exists(filepath):
-                os.unlink(filepath)
-                logger.info(f"Cleaned up old recording file: {recording['filename']}")
-            
-            # Remove from completed recordings
-            del _completed_recordings[recording_id]
-            logger.info(f"Removed old recording from memory: {recording_id}")
-            
-        except Exception as e:
-            logger.error(f"Error cleaning up recording {recording_id}: {e}")
-    
-    if recordings_to_remove:
-        logger.info(f"Cleanup job completed: removed {len(recordings_to_remove)} old recordings")
-    else:
-        logger.debug("Cleanup job completed: no old recordings to remove")
-
-
-def _start_cleanup_timer():
-    """Start the periodic cleanup timer (runs every 60 minutes)."""
-    global _cleanup_timer
-    
-    def run_cleanup():
-        _cleanup_old_recordings()
-        # Schedule next cleanup
-        _start_cleanup_timer()
-    
-    _cleanup_timer = threading.Timer(3600.0, run_cleanup)  # 3600 seconds = 60 minutes
-    _cleanup_timer.daemon = True
-    _cleanup_timer.start()
-    logger.info("Started cleanup timer: will run every 60 minutes")
-
-
-def _stop_cleanup_timer():
-    """Stop the cleanup timer."""
-    global _cleanup_timer
-    if _cleanup_timer and _cleanup_timer.is_alive():
-        _cleanup_timer.cancel()
-        logger.info("Stopped cleanup timer")
-
-
-def _signal_handler(signum, frame):
-    """Handle shutdown signals to cleanup resources."""
-    logger.info(f"Received signal {signum}, shutting down...")
-    _stop_cleanup_timer()
-    sys.exit(0)
 
 
 @app.route("/version", methods=["GET"])
@@ -400,7 +242,7 @@ def analyze_fft():
     # Determine file path
     if filename:
         # Security validation for recorded files
-        validated_path = _validate_recording_file(filename)
+        validated_path = validate_recording_file(filename)
         target_file = validated_path
     else:
         # External file path - basic security checks
@@ -556,9 +398,8 @@ def analyze_fft_recording(recording_id: str):
 
 
 @app.route("/audio/record/start", methods=["POST"])
-def start_recording():
+def start_recording_endpoint():
     """Start recording audio to a WAV file in background."""
-    global _active_recordings
     
     try:
         duration_str = request.args.get("duration", "10.0")
@@ -589,25 +430,8 @@ def start_recording():
         # Generate unique recording ID
         recording_id = str(uuid.uuid4())[:8]  # Short UUID for easier handling
         
-        # Create recording entry
-        _active_recordings[recording_id] = {
-            "thread": None,
-            "filename": f"recording_{recording_id}.wav",
-            "status": "starting",
-            "device": device,
-            "duration": duration,
-            "sample_rate": sample_rate,
-            "start_time": datetime.now()
-        }
-        
-        # Start recording thread
-        recording_thread = threading.Thread(
-            target=_recording_worker,
-            args=(recording_id, device, duration, sample_rate),
-            daemon=True
-        )
-        _active_recordings[recording_id]["thread"] = recording_thread
-        recording_thread.start()
+        # Start recording using the recording module
+        start_recording(recording_id, device, duration, sample_rate)
         
         logger.info(f"Started recording {recording_id}: {duration}s on {device} at {sample_rate}Hz")
         
@@ -628,91 +452,53 @@ def start_recording():
 
 
 @app.route("/audio/record/status/<recording_id>", methods=["GET"])
-def get_recording_status(recording_id: str):
+def get_recording_status_endpoint(recording_id: str):
     """Get the status of a specific recording."""
-    global _active_recordings, _completed_recordings
     
-    # Check active recordings
-    if recording_id in _active_recordings:
-        recording = _active_recordings[recording_id]
-        elapsed = (datetime.now() - recording["start_time"]).total_seconds()
-        remaining = max(0, recording["duration"] - elapsed)
-        
-        return jsonify({
+    status = get_recording_status(recording_id)
+    if status is None:
+        abort(404, f"Recording {recording_id} not found")
+    
+    # Add some additional fields for backwards compatibility
+    if status["status"] == "active":
+        elapsed = (datetime.now() - datetime.fromisoformat(status["start_time"])).total_seconds()
+        remaining = max(0, status["duration"] - elapsed)
+        status.update({
             "recording_id": recording_id,
-            "status": recording["status"],
-            "filename": recording["filename"],
-            "device": recording["device"],
-            "duration": recording["duration"],
-            "sample_rate": recording["sample_rate"],
             "elapsed_seconds": round(elapsed, 1),
             "remaining_seconds": round(remaining, 1),
             "completed": False
         })
-    
-    # Check completed recordings
-    if recording_id in _completed_recordings:
-        recording = _completed_recordings[recording_id]
-        return jsonify({
+    elif status["status"] == "completed":
+        status.update({
             "recording_id": recording_id,
-            "status": "completed",
-            "filename": recording["filename"],
-            "device": recording["device"],
-            "duration": recording["duration"],
-            "sample_rate": recording["sample_rate"],
-            "timestamp": recording["timestamp"].isoformat(),
             "completed": True,
-            "file_available": os.path.exists(recording["filepath"])
+            "file_available": os.path.exists(status["filepath"])
         })
     
-    abort(404, f"Recording {recording_id} not found")
+    return jsonify(status)
 
 
 @app.route("/audio/record/list", methods=["GET"])
-def list_recordings():
+def list_recordings_endpoint():
     """List all recordings (active and completed)."""
-    global _active_recordings, _completed_recordings
     
-    active = []
-    for recording_id, recording in _active_recordings.items():
-        elapsed = (datetime.now() - recording["start_time"]).total_seconds()
-        remaining = max(0, recording["duration"] - elapsed)
-        
-        active.append({
-            "recording_id": recording_id,
-            "status": recording["status"],
-            "filename": recording["filename"],
-            "elapsed_seconds": round(elapsed, 1),
-            "remaining_seconds": round(remaining, 1)
-        })
+    recordings_data = list_recordings()
+    # Add temp directory for backwards compatibility
+    recordings_data["temp_directory"] = recording_manager.get_temp_dir()
     
-    completed = []
-    for recording_id, recording in _completed_recordings.items():
-        completed.append({
-            "recording_id": recording_id,
-            "filename": recording["filename"],
-            "duration": recording["duration"],
-            "timestamp": recording["timestamp"].isoformat(),
-            "file_available": os.path.exists(recording["filepath"])
-        })
-    
-    return jsonify({
-        "active_recordings": active,
-        "completed_recordings": completed,
-        "temp_directory": _temp_dir
-    })
+    return jsonify(recordings_data)
 
 
 @app.route("/audio/record/download/<recording_id>", methods=["GET"])
-def download_recording(recording_id: str):
+def download_recording_endpoint(recording_id: str):
     """Download a completed recording file."""
-    global _completed_recordings
     
-    if recording_id not in _completed_recordings:
-        abort(404, f"Recording {recording_id} not found")
+    status = get_recording_status(recording_id)
+    if status is None or status["status"] != "completed":
+        abort(404, f"Recording {recording_id} not found or not completed")
     
-    recording = _completed_recordings[recording_id]
-    filepath = recording["filepath"]
+    filepath = status["filepath"]
     
     if not os.path.exists(filepath):
         abort(404, "Recording file no longer available")
@@ -720,39 +506,33 @@ def download_recording(recording_id: str):
     return send_file(
         filepath,
         as_attachment=True,
-        download_name=recording["filename"],
+        download_name=status["filename"],
         mimetype="audio/wav"
     )
 
 
 @app.route("/audio/record/delete/<recording_id>", methods=["DELETE"])
-def delete_recording(recording_id: str):
+def delete_recording_endpoint(recording_id: str):
     """Delete a specific recording file."""
-    global _completed_recordings
     
-    if recording_id not in _completed_recordings:
-        abort(404, f"Recording {recording_id} not found")
-    
-    recording = _completed_recordings[recording_id]
-    filepath = recording["filepath"]
+    status = get_recording_status(recording_id)
+    if status is None or status["status"] != "completed":
+        abort(404, f"Recording {recording_id} not found or not completed")
     
     try:
-        # Security check - ensure file is in temp directory
-        _validate_recording_file(recording["filename"])
-        
-        if os.path.exists(filepath):
-            os.unlink(filepath)
-            logger.info(f"Deleted recording {recording_id}: {recording['filename']}")
+        if delete_recording(recording_id):
+            return jsonify({
+                "status": "deleted",
+                "recording_id": recording_id,
+                "filename": status["filename"],
+                "message": f"Recording {recording_id} deleted successfully"
+            })
+        else:
+            abort(500, f"Failed to delete recording {recording_id}")
             
-        # Remove from completed recordings
-        del _completed_recordings[recording_id]
-        
-        return jsonify({
-            "status": "deleted",
-            "recording_id": recording_id,
-            "filename": recording["filename"],
-            "message": f"Recording {recording_id} deleted successfully"
-        })
+    except Exception as e:
+        logger.error(f"Error deleting recording {recording_id}: {e}")
+        abort(500, f"Failed to delete recording: {str(e)}")
         
     except Exception as e:
         logger.error(f"Error deleting recording {recording_id}: {e}")
@@ -760,47 +540,39 @@ def delete_recording(recording_id: str):
 
 
 @app.route("/audio/record/delete-file/<filename>", methods=["DELETE"])
-def delete_recording_file(filename: str):
+def delete_recording_file_endpoint(filename: str):
     """Delete a recording file by filename (for security, only allows files in temp directory)."""
     try:
-        filepath = _validate_recording_file(filename)
-        
-        os.unlink(filepath)
-        logger.info(f"Deleted recording file: {filename}")
-        
-        # Also remove from completed recordings if present
-        recording_id_to_remove = None
-        for recording_id, recording in _completed_recordings.items():
-            if recording["filename"] == filename:
-                recording_id_to_remove = recording_id
-                break
-        
-        if recording_id_to_remove:
-            del _completed_recordings[recording_id_to_remove]
-        
-        return jsonify({
-            "status": "deleted",
-            "filename": filename,
-            "message": f"Recording file {filename} deleted successfully"
-        })
+        if delete_recording_file(filename):
+            return jsonify({
+                "status": "deleted",
+                "filename": filename,
+                "message": f"Recording file {filename} deleted successfully"
+            })
+        else:
+            abort(500, f"Failed to delete recording file {filename}")
         
     except Exception as e:
+        logger.error(f"Error deleting recording file {filename}: {e}")
+        abort(500, f"Failed to delete recording file: {str(e)}")
         logger.error(f"Error deleting recording file {filename}: {e}")
         abort(500, f"Failed to delete recording file: {str(e)}")
 
 
 @app.route("/audio/record/cleanup", methods=["POST"])
-def cleanup_recordings():
+def cleanup_recordings_endpoint():
     """Manually trigger cleanup of recordings older than 10 minutes."""
     try:
         # Get count before cleanup
-        before_count = len(_completed_recordings)
+        recordings_data = list_recordings()
+        before_count = recordings_data["completed_count"]
         
         # Run cleanup
-        _cleanup_old_recordings()
+        cleanup_old_recordings()
         
         # Get count after cleanup
-        after_count = len(_completed_recordings)
+        recordings_data = list_recordings()
+        after_count = recordings_data["completed_count"]
         removed_count = before_count - after_count
         
         return jsonify({
@@ -817,31 +589,10 @@ def cleanup_recordings():
 
 
 @app.route("/audio/record/cleanup/status", methods=["GET"])
-def cleanup_status():
+def cleanup_status_endpoint():
     """Get current cleanup status and settings."""
-    global _cleanup_timer
     
-    cutoff_time = datetime.now() - timedelta(minutes=10)
-    old_recordings = []
-    
-    for recording_id, recording in _completed_recordings.items():
-        if recording["timestamp"] < cutoff_time:
-            age_minutes = (datetime.now() - recording["timestamp"]).total_seconds() / 60
-            old_recordings.append({
-                "recording_id": recording_id,
-                "filename": recording["filename"],
-                "timestamp": recording["timestamp"].isoformat(),
-                "age_minutes": round(age_minutes, 1)
-            })
-    
-    return jsonify({
-        "cleanup_interval_minutes": 60,
-        "max_age_minutes": 10,
-        "timer_active": _cleanup_timer is not None and _cleanup_timer.is_alive(),
-        "total_recordings": len(_completed_recordings),
-        "old_recordings_count": len(old_recordings),
-        "old_recordings": old_recordings
-    })
+    return jsonify(get_cleanup_status())
 
 
 @app.route("/audio/sweep/start", methods=["POST"])
@@ -1318,11 +1069,11 @@ def root():
 def main():
     """Main entry point for the roomeq-server console script."""
     # Register signal handlers for graceful shutdown
-    signal.signal(signal.SIGINT, _signal_handler)
-    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGINT, recording_signal_handler)
+    signal.signal(signal.SIGTERM, recording_signal_handler)
     
     # Start the cleanup timer
-    _start_cleanup_timer()
+    start_cleanup_timer()
     
     app.run(
         host="0.0.0.0", 
