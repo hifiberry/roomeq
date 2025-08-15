@@ -15,8 +15,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 # Local imports
-from roomeq.fft import load_wav_file, compute_fft, analyze_wav_file, validate_fft_parameters
-from roomeq.recording import (
+from fft import load_wav_file, compute_fft, analyze_wav_file, validate_fft_parameters
+from recording import (
     recording_manager, 
     start_recording, 
     get_recording_status,
@@ -31,9 +31,9 @@ from roomeq.recording import (
     signal_handler as recording_signal_handler
 )
 
-from .microphone import MicrophoneDetector, detect_microphones
-from .analysis import measure_spl
-from .signal_generator import SignalGenerator
+from microphone import MicrophoneDetector, detect_microphones
+from analysis import measure_spl
+from signal_generator import SignalGenerator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -147,7 +147,7 @@ def get_version():
         "features": [
             "Microphone detection with sensitivity and gain",
             "SPL measurement",
-            "FFT analysis with windowing and normalization",
+            "FFT analysis with windowing, normalization, and logarithmic frequency summarization",
             "Audio recording with automatic cleanup",
             "Sine sweep generation",
             "White/pink noise generation"
@@ -313,6 +313,7 @@ def analyze_fft():
     start_time_str = request.args.get("start_time", "0")
     duration_str = request.args.get("duration")
     normalize_str = request.args.get("normalize")
+    points_per_octave_str = request.args.get("points_per_octave")
     
     # Validate parameters
     if not filename and not filepath:
@@ -359,12 +360,21 @@ def analyze_fft():
     if normalize_str:
         normalize = validate_float_param("normalize", normalize_str, 0.1, 50000.0)
     
+    points_per_octave = None
+    if points_per_octave_str:
+        try:
+            points_per_octave = int(points_per_octave_str)
+            if points_per_octave < 1 or points_per_octave > 100:
+                abort(400, "points_per_octave must be between 1 and 100")
+        except ValueError:
+            abort(400, "Invalid points_per_octave: must be an integer")
+    
     try:
         # Validate parameters using FFT module
         validate_fft_parameters(fft_size, window_type)
         
         # Use FFT module for analysis
-        result = analyze_wav_file(target_file, window_type, fft_size, start_time, duration, normalize)
+        result = analyze_wav_file(target_file, window_type, fft_size, start_time, duration, normalize, points_per_octave)
         
         # Prepare response
         response = {
@@ -419,10 +429,12 @@ def analyze_fft_recording(recording_id: str):
         start_time_str = request.args.get("start_time", "0")
         duration_str = request.args.get("duration")
         normalize_str = request.args.get("normalize")
+        points_per_octave_str = request.args.get("points_per_octave")
         
         logger.debug(f"FFT analysis parameters for {recording_id}: window={window_type}, "
                     f"fft_size={fft_size_str}, start_time={start_time_str}, "
-                    f"duration={duration_str}, normalize={normalize_str}")
+                    f"duration={duration_str}, normalize={normalize_str}, "
+                    f"points_per_octave={points_per_octave_str}")
         
         # Validate parameters
         start_time = 0.0
@@ -448,13 +460,22 @@ def analyze_fft_recording(recording_id: str):
         if normalize_str:
             normalize = validate_float_param("normalize", normalize_str, 0.1, 50000.0)
         
+        points_per_octave = None
+        if points_per_octave_str:
+            try:
+                points_per_octave = int(points_per_octave_str)
+                if points_per_octave < 1 or points_per_octave > 100:
+                    abort(400, "points_per_octave must be between 1 and 100")
+            except ValueError:
+                abort(400, "Invalid points_per_octave: must be an integer")
+        
         # Validate parameters using FFT module
         validate_fft_parameters(fft_size, window_type)
         
         logger.info(f"Starting FFT analysis for recording {recording_id} on file {filepath}")
         
         # Use FFT module for analysis
-        result = analyze_wav_file(filepath, window_type, fft_size, start_time, duration, normalize)
+        result = analyze_wav_file(filepath, window_type, fft_size, start_time, duration, normalize, points_per_octave)
         
         # Prepare response with recording context
         response = {
@@ -963,14 +984,14 @@ def root():
         "message": "RoomEQ Audio Processing API",
         "version": "0.3.0",
         "framework": "Flask",
-        "description": "REST API for microphone detection, SPL measurement, audio signal generation, recording, and FFT analysis for acoustic measurements and room equalization",
+        "description": "REST API for microphone detection, SPL measurement, audio signal generation, recording, and FFT analysis with logarithmic frequency summarization for acoustic measurements and room equalization",
         "features": [
             "Automatic microphone detection with sensitivity and gain information",
             "Real-time SPL (Sound Pressure Level) measurement",
             "White noise generation with keep-alive control",
             "Logarithmic sine sweep generation with multiple repeat support",
             "Background audio recording to WAV files with secure file management",
-            "FFT spectral analysis with dB output and frequency normalization",
+            "FFT spectral analysis with dB output, frequency normalization, and logarithmic frequency summarization",
             "Windowing functions support (Hann, Hamming, Blackman)",
             "Frequency band analysis and automatic peak detection",
             "Real-time playback and recording management",
@@ -1006,6 +1027,10 @@ def root():
                 "/audio/record/download/<recording_id>": "Download completed recording",
                 "/audio/record/delete/<recording_id>": "Delete specific recording",
                 "/audio/record/delete-file/<filename>": "Delete recording file by name"
+            },
+            "fft_analysis": {
+                "/audio/analyze/fft": "Analyze WAV file with FFT (by filename or filepath)",
+                "/audio/analyze/fft-recording/<recording_id>": "Analyze recorded file with FFT by recording ID"
             }
         },
         "usage_examples": {
@@ -1090,6 +1115,27 @@ def root():
                 "delete_by_id": "curl -X DELETE http://localhost:10315/audio/record/delete/abc12345",
                 "delete_by_filename": "curl -X DELETE http://localhost:10315/audio/record/delete-file/recording_abc12345.wav"
             },
+            "fft_analysis": {
+                "description": "Perform FFT analysis on WAV files with optional logarithmic frequency summarization",
+                "method": "POST",
+                "url": "/audio/analyze/fft",
+                "parameters": {
+                    "filename": "Recorded filename (use with recording system)",
+                    "filepath": "External WAV file path (alternative to filename)",
+                    "window": "Window function (hann|hamming|blackman|rectangular, default: hann)",
+                    "fft_size": "FFT size, power of 2 (64-65536, default: auto)",
+                    "start_time": "Start analysis at time in seconds (default: 0)",
+                    "duration": "Analyze duration in seconds (0.1-300, default: entire file)",
+                    "normalize": "Normalize to frequency in Hz (0.1-50000, optional)",
+                    "points_per_octave": "Summarize to log frequency buckets (1-100, optional)"
+                },
+                "examples": {
+                    "basic": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav'",
+                    "with_summarization": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&points_per_octave=16'",
+                    "external_file": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filepath=/path/to/file.wav&window=hann&normalize=1000'",
+                    "recording_analysis": "curl -X POST 'http://localhost:10315/audio/analyze/fft-recording/abc12345?points_per_octave=12'"
+                }
+            },
             "playback_control": {
                 "stop": "curl -X POST http://localhost:10315/audio/noise/stop",
                 "status": "curl -X GET http://localhost:10315/audio/noise/status"
@@ -1164,6 +1210,67 @@ def root():
                     "completed": True,
                     "file_available": True
                 }
+            },
+            "fft_analysis": {
+                "description": "FFT analysis results with optional logarithmic frequency summarization",
+                "standard_example": {
+                    "status": "success",
+                    "file_info": {
+                        "filename": "recording_abc12345.wav",
+                        "analyzed_duration": 10.0,
+                        "analyzed_samples": 480000,
+                        "start_time": 0.0
+                    },
+                    "fft_analysis": {
+                        "fft_size": 32768,
+                        "window_type": "hann",
+                        "sample_rate": 48000,
+                        "frequency_resolution": 1.46,
+                        "frequencies": [0.0, 1.46, 2.93, "..."],
+                        "magnitudes": [-80.2, -78.5, -76.1, "..."],
+                        "phases": [0.0, 0.15, -0.32, "..."],
+                        "peak_frequency": 1000.0,
+                        "peak_magnitude": -20.5,
+                        "spectral_centroid": 2500.0,
+                        "frequency_bands": {
+                            "bass": {"range": "60-250 Hz", "avg_magnitude": -45.2, "peak_frequency": 120.0},
+                            "midrange": {"range": "500-2000 Hz", "avg_magnitude": -25.8, "peak_frequency": 1000.0}
+                        },
+                        "normalization": {"applied": false}
+                    },
+                    "timestamp": "2025-08-15T12:25:00.123456"
+                },
+                "summarized_example": {
+                    "status": "success",
+                    "file_info": {
+                        "filename": "recording_abc12345.wav",
+                        "analyzed_duration": 10.0,
+                        "analyzed_samples": 480000,
+                        "start_time": 0.0
+                    },
+                    "fft_analysis": {
+                        "fft_size": 32768,
+                        "window_type": "hann",
+                        "sample_rate": 48000,
+                        "frequency_resolution": 1.46,
+                        "log_frequency_summary": {
+                            "frequencies": [20.0, 23.8, 28.3, 33.7, 40.1, 47.8, "..."],
+                            "magnitudes": [-65.2, -62.8, -58.4, -55.1, -52.3, -48.9, "..."],
+                            "points_per_octave": 16,
+                            "frequency_range": [20.0, 20000.0],
+                            "n_octaves": 10.0,
+                            "n_points": 161
+                        },
+                        "peak_frequency": 1000.0,
+                        "peak_magnitude": -20.5,
+                        "spectral_centroid": 2500.0,
+                        "frequency_bands": {
+                            "bass": {"range": "60-250 Hz", "avg_magnitude": -45.2, "peak_frequency": 120.0}
+                        },
+                        "normalization": {"applied": false}
+                    },
+                    "timestamp": "2025-08-15T12:25:00.123456"
+                }
             }
         },
         "technical_details": {
@@ -1173,6 +1280,8 @@ def root():
             "microphone_calibration": "Automatic sensitivity and gain compensation",
             "device_detection": "ALSA-based audio device enumeration",
             "playback_monitoring": "Real-time status tracking with automatic timeout",
+            "fft_analysis": "FFT with windowing functions, normalization, and logarithmic frequency summarization",
+            "frequency_summarization": "Logarithmic frequency buckets with configurable points per octave (1-100)",
             "cors_support": "Cross-origin requests enabled for web applications"
         },
         "server_info": {

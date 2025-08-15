@@ -75,7 +75,7 @@ def load_wav_file(filepath: str) -> Tuple[np.ndarray, int, Dict]:
 
 
 def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'hann', 
-                fft_size: int = None, normalize: float = None) -> Dict:
+                fft_size: int = None, normalize: float = None, points_per_octave: int = None) -> Dict:
     """
     Compute comprehensive FFT analysis of audio data.
     
@@ -85,6 +85,7 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
         window_type: Window function ('hann', 'hamming', 'blackman', 'none')
         fft_size: FFT size (power of 2), auto-calculated if None
         normalize: Frequency in Hz to normalize to 0 dB, None for no normalization
+        points_per_octave: If specified, summarize FFT into log frequency buckets
         
     Returns:
         Dict containing comprehensive FFT analysis results with levels in dB
@@ -217,7 +218,8 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
             "brilliance": analyze_band(6000, 20000, "Brilliance")
         }
         
-        return {
+        # Prepare base result
+        result = {
             'fft_size': fft_size,
             'window_type': window_type,
             'sample_rate': sample_rate,
@@ -232,12 +234,29 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
             'normalization': normalization_info
         }
         
+        # Add logarithmic summarization if requested
+        if points_per_octave is not None:
+            try:
+                log_summary = summarize_fft_log_frequency(
+                    frequencies, magnitude_db, points_per_octave
+                )
+                result['log_frequency_summary'] = log_summary
+            except Exception as e:
+                # If summarization fails, add error info but continue
+                result['log_frequency_summary'] = {
+                    'error': f"Summarization failed: {str(e)}",
+                    'points_per_octave': points_per_octave
+                }
+        
+        return result
+        
     except Exception as e:
         raise RuntimeError(f"FFT computation failed: {str(e)}")
 
 
 def analyze_wav_file(filepath: str, window_type: str = 'hann', fft_size: int = None,
-                     start_time: float = 0.0, duration: float = None, normalize: float = None) -> Dict:
+                     start_time: float = 0.0, duration: float = None, normalize: float = None, 
+                     points_per_octave: int = None) -> Dict:
     """
     Complete FFT analysis of a WAV file with time windowing support.
     
@@ -248,6 +267,7 @@ def analyze_wav_file(filepath: str, window_type: str = 'hann', fft_size: int = N
         start_time: Start analysis at this time in seconds
         duration: Duration to analyze in seconds, None for entire file
         normalize: Frequency in Hz to normalize to 0 dB, None for no normalization
+        points_per_octave: If specified, summarize FFT into log frequency buckets
         
     Returns:
         Dict containing file info and FFT analysis
@@ -273,7 +293,7 @@ def analyze_wav_file(filepath: str, window_type: str = 'hann', fft_size: int = N
             audio_data = audio_data[start_sample:]
     
     # Perform FFT analysis
-    fft_result = compute_fft(audio_data, sample_rate, window_type, fft_size, normalize)
+    fft_result = compute_fft(audio_data, sample_rate, window_type, fft_size, normalize, points_per_octave)
     
     return {
         'file_info': {
@@ -327,3 +347,111 @@ def validate_fft_parameters(fft_size: int = None, window_type: str = 'hann') -> 
         'fft_size': fft_size,
         'window_type': window_type
     }
+
+
+def summarize_fft_log_frequency(frequencies: np.ndarray, magnitudes: np.ndarray, 
+                               points_per_octave: int = 16, 
+                               f_min: float = 20.0, f_max: float = 20000.0) -> Dict:
+    """
+    Summarize FFT data into logarithmically spaced frequency buckets.
+    
+    Args:
+        frequencies: Frequency array from FFT
+        magnitudes: Magnitude array in dB from FFT
+        points_per_octave: Number of frequency points per octave
+        f_min: Minimum frequency to include (Hz)
+        f_max: Maximum frequency to include (Hz)
+        
+    Returns:
+        Dict containing summarized frequency and magnitude data
+        
+    Raises:
+        ValueError: If parameters are invalid
+    """
+    try:
+        # Validate inputs
+        if points_per_octave < 1 or points_per_octave > 100:
+            raise ValueError("points_per_octave must be between 1 and 100")
+        
+        if f_min <= 0 or f_max <= f_min:
+            raise ValueError("f_min must be positive and f_max must be greater than f_min")
+        
+        # Clip frequency range to available data
+        f_min = max(f_min, frequencies[1])  # Skip DC component
+        f_max = min(f_max, frequencies[-1])
+        
+        if f_min >= f_max:
+            raise ValueError("No frequency data available in the specified range")
+        
+        # Calculate logarithmically spaced frequency bins
+        n_octaves = np.log2(f_max / f_min)
+        n_points = int(n_octaves * points_per_octave) + 1
+        
+        # Create logarithmically spaced frequency points
+        log_frequencies = np.logspace(np.log10(f_min), np.log10(f_max), n_points)
+        
+        # Create frequency bin edges (geometric mean between adjacent points)
+        bin_edges = np.zeros(len(log_frequencies) + 1)
+        bin_edges[0] = f_min / np.sqrt(log_frequencies[1] / log_frequencies[0])
+        bin_edges[-1] = f_max * np.sqrt(log_frequencies[-1] / log_frequencies[-2])
+        
+        for i in range(1, len(log_frequencies)):
+            bin_edges[i] = np.sqrt(log_frequencies[i-1] * log_frequencies[i])
+        
+        # Initialize output arrays
+        summarized_frequencies = []
+        summarized_magnitudes = []
+        bin_info = []
+        
+        # Process each frequency bin
+        for i in range(len(log_frequencies)):
+            f_low = bin_edges[i]
+            f_high = bin_edges[i + 1]
+            f_center = log_frequencies[i]
+            
+            # Find FFT bins within this logarithmic bin
+            mask = (frequencies >= f_low) & (frequencies < f_high)
+            bin_indices = np.where(mask)[0]
+            
+            if len(bin_indices) > 0:
+                # Calculate mean magnitude in dB (since magnitudes are already in log space)
+                bin_magnitudes = magnitudes[bin_indices]
+                mean_magnitude = np.mean(bin_magnitudes)
+                
+                summarized_frequencies.append(float(f_center))
+                summarized_magnitudes.append(float(mean_magnitude))
+                
+                bin_info.append({
+                    "center_freq": float(f_center),
+                    "freq_range": [float(f_low), float(f_high)],
+                    "n_samples": len(bin_indices),
+                    "mean_magnitude": float(mean_magnitude),
+                    "min_magnitude": float(np.min(bin_magnitudes)),
+                    "max_magnitude": float(np.max(bin_magnitudes))
+                })
+            else:
+                # No data in this bin, interpolate from neighboring bins
+                summarized_frequencies.append(float(f_center))
+                summarized_magnitudes.append(-100.0)  # Very low value for empty bins
+                
+                bin_info.append({
+                    "center_freq": float(f_center),
+                    "freq_range": [float(f_low), float(f_high)],
+                    "n_samples": 0,
+                    "mean_magnitude": -100.0,
+                    "min_magnitude": -100.0,
+                    "max_magnitude": -100.0
+                })
+        
+        return {
+            "frequencies": summarized_frequencies,
+            "magnitudes": summarized_magnitudes,
+            "points_per_octave": points_per_octave,
+            "frequency_range": [float(f_min), float(f_max)],
+            "n_octaves": float(n_octaves),
+            "n_points": len(summarized_frequencies),
+            "bin_details": bin_info
+        }
+        
+    except Exception as e:
+        raise RuntimeError(f"FFT summarization failed: {str(e)}")
