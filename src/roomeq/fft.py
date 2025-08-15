@@ -75,7 +75,8 @@ def load_wav_file(filepath: str) -> Tuple[np.ndarray, int, Dict]:
 
 
 def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'hann', 
-                fft_size: int = None, normalize: float = None, points_per_octave: int = None) -> Dict:
+                fft_size: int = None, normalize: float = None, points_per_octave: int = None,
+                psychoacoustic_smoothing: float = None) -> Dict:
     """
     Compute comprehensive FFT analysis of audio data.
     
@@ -86,6 +87,7 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
         fft_size: FFT size (power of 2), auto-calculated if None
         normalize: Frequency in Hz to normalize to 0 dB, None for no normalization
         points_per_octave: If specified, summarize FFT into log frequency buckets
+        psychoacoustic_smoothing: If specified, apply psychoacoustic smoothing (factor 0.5-2.0)
         
     Returns:
         Dict containing comprehensive FFT analysis results with levels in dB
@@ -159,6 +161,26 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
         
         # Create frequency axis
         frequencies = np.fft.rfftfreq(fft_size, 1/sample_rate)
+        
+        # Apply psychoacoustic smoothing if requested
+        smoothing_info = {}
+        if psychoacoustic_smoothing is not None:
+            try:
+                magnitude_db = apply_psychoacoustic_smoothing(
+                    frequencies, magnitude_db, psychoacoustic_smoothing
+                )
+                smoothing_info = {
+                    "applied": True,
+                    "smoothing_factor": float(psychoacoustic_smoothing),
+                    "type": "psychoacoustic"
+                }
+            except Exception as e:
+                smoothing_info = {
+                    "applied": False,
+                    "error": str(e)
+                }
+        else:
+            smoothing_info = {"applied": False}
         
         # Apply normalization if requested
         normalization_info = {}
@@ -257,6 +279,7 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
             'spectral_centroid': float(spectral_centroid),
             'frequency_bands': frequency_bands,
             'normalization': normalization_info,
+            'smoothing': smoothing_info,
             'spectral_density': {
                 'type': 'Magnitude Spectrum',
                 'units': 'dB re FS',
@@ -288,7 +311,7 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
 
 def compute_fft_time_averaged(audio_data: np.ndarray, sample_rate: int, window_type: str = 'hann',
                               fft_size: int = None, overlap: float = 0.5, normalize: float = None,
-                              points_per_octave: int = None) -> Dict:
+                              points_per_octave: int = None, psychoacoustic_smoothing: float = None) -> Dict:
     """
     Compute a time-averaged FFT over multiple overlapping windows (Welch-style averaging).
 
@@ -303,6 +326,7 @@ def compute_fft_time_averaged(audio_data: np.ndarray, sample_rate: int, window_t
         overlap: Fractional overlap between segments (0.0 - 0.95)
         normalize: Frequency in Hz to normalize to 0 dB, None for no normalization
         points_per_octave: If specified, summarize into log frequency buckets
+        psychoacoustic_smoothing: If specified, apply psychoacoustic smoothing (factor 0.5-2.0)
 
     Returns:
         Dict with averaged FFT results similar to compute_fft(), plus segment metadata
@@ -370,7 +394,8 @@ def compute_fft_time_averaged(audio_data: np.ndarray, sample_rate: int, window_t
             seg_count += 1
 
         if seg_count == 0:
-            return compute_fft(audio_data, sample_rate, window_type, fft_size, normalize, points_per_octave)
+            return compute_fft(audio_data, sample_rate, window_type, fft_size, normalize, 
+                             points_per_octave, psychoacoustic_smoothing)
 
         avg_power = acc_power / seg_count
 
@@ -378,6 +403,26 @@ def compute_fft_time_averaged(audio_data: np.ndarray, sample_rate: int, window_t
         with np.errstate(divide='ignore', invalid='ignore'):
             magnitude_db = 10 * np.log10(avg_power + 1e-20)
             magnitude_db[~np.isfinite(magnitude_db)] = -np.inf
+
+        # Apply psychoacoustic smoothing if requested
+        smoothing_info = {}
+        if psychoacoustic_smoothing is not None:
+            try:
+                magnitude_db = apply_psychoacoustic_smoothing(
+                    frequencies, magnitude_db, psychoacoustic_smoothing
+                )
+                smoothing_info = {
+                    "applied": True,
+                    "smoothing_factor": float(psychoacoustic_smoothing),
+                    "type": "psychoacoustic"
+                }
+            except Exception as e:
+                smoothing_info = {
+                    "applied": False,
+                    "error": str(e)
+                }
+        else:
+            smoothing_info = {"applied": False}
 
         # Normalization (optional)
         normalization_info = {"applied": False}
@@ -413,6 +458,7 @@ def compute_fft_time_averaged(audio_data: np.ndarray, sample_rate: int, window_t
             'spectral_centroid': float(np.sum(frequencies * avg_power) / (np.sum(avg_power) + 1e-20)),
             'frequency_bands': {},
             'normalization': normalization_info,
+            'smoothing': smoothing_info,
             'spectral_density': {
                 'type': 'Averaged Power Spectrum',
                 'units': 'dB re FS (power)',
@@ -444,7 +490,7 @@ def compute_fft_time_averaged(audio_data: np.ndarray, sample_rate: int, window_t
 
 def analyze_wav_file(filepath: str, window_type: str = 'hann', fft_size: int = None,
                      start_time: float = 0.0, duration: float = None, normalize: float = None, 
-                     points_per_octave: int = None) -> Dict:
+                     points_per_octave: int = None, psychoacoustic_smoothing: float = None) -> Dict:
     """
     Complete FFT analysis of a WAV file with time windowing support.
     
@@ -456,6 +502,7 @@ def analyze_wav_file(filepath: str, window_type: str = 'hann', fft_size: int = N
         duration: Duration to analyze in seconds, None for entire file
         normalize: Frequency in Hz to normalize to 0 dB, None for no normalization
         points_per_octave: If specified, summarize FFT into log frequency buckets
+        psychoacoustic_smoothing: If specified, apply psychoacoustic smoothing (factor 0.5-2.0)
         
     Returns:
         Dict containing file info and FFT analysis
@@ -481,7 +528,8 @@ def analyze_wav_file(filepath: str, window_type: str = 'hann', fft_size: int = N
             audio_data = audio_data[start_sample:]
     
     # Perform FFT analysis
-    fft_result = compute_fft(audio_data, sample_rate, window_type, fft_size, normalize, points_per_octave)
+    fft_result = compute_fft(audio_data, sample_rate, window_type, fft_size, normalize, 
+                           points_per_octave, psychoacoustic_smoothing)
     
     return {
         'file_info': {
@@ -535,6 +583,87 @@ def validate_fft_parameters(fft_size: int = None, window_type: str = 'hann') -> 
         'fft_size': fft_size,
         'window_type': window_type
     }
+
+
+def apply_psychoacoustic_smoothing(frequencies: np.ndarray, magnitudes: np.ndarray,
+                                  smoothing_factor: float = 1.0) -> np.ndarray:
+    """
+    Apply psychoacoustic smoothing to FFT data using frequency-dependent bandwidth.
+    
+    This smoothing follows critical bands of human hearing, providing narrow bandwidth
+    smoothing at low frequencies and wider bandwidth at high frequencies, similar to
+    the behavior of the human auditory system.
+    
+    Args:
+        frequencies: Frequency array from FFT
+        magnitudes: Magnitude array in dB from FFT
+        smoothing_factor: Smoothing strength multiplier (0.5 = less, 2.0 = more)
+        
+    Returns:
+        Smoothed magnitude array in dB
+        
+    Raises:
+        ValueError: If parameters are invalid
+    """
+    try:
+        if len(frequencies) != len(magnitudes):
+            raise ValueError("Frequency and magnitude arrays must have same length")
+        
+        if smoothing_factor <= 0:
+            raise ValueError("Smoothing factor must be positive")
+        
+        # Convert to numpy arrays if needed
+        freq = np.asarray(frequencies, dtype=np.float64)
+        mag = np.asarray(magnitudes, dtype=np.float64)
+        
+        # Skip DC component if present
+        start_idx = 1 if freq[0] == 0 else 0
+        
+        smoothed = mag.copy()
+        
+        # Apply smoothing to each frequency bin
+        for i in range(start_idx, len(freq)):
+            f_center = freq[i]
+            
+            if f_center <= 0:
+                continue
+                
+            # Calculate critical band width using Bark scale approximation
+            # Critical bandwidth in Hz: CBW ≈ 25 + 75 * (1 + 1.4 * (f/1000)^0.69)^0.64
+            # Simplified approximation for computational efficiency
+            if f_center < 500:
+                # Low frequencies: narrower bandwidth
+                cbw = 25 + 75 * (f_center / 1000.0) ** 0.5
+            else:
+                # Higher frequencies: wider bandwidth following Bark scale
+                cbw = 25 + 75 * (1 + 1.4 * (f_center / 1000.0) ** 0.69) ** 0.64
+            
+            # Apply smoothing factor
+            bandwidth = cbw * smoothing_factor
+            
+            # Define smoothing window around current frequency
+            f_low = f_center - bandwidth / 2
+            f_high = f_center + bandwidth / 2
+            
+            # Find frequency bins within the smoothing window
+            window_indices = np.where((freq >= f_low) & (freq <= f_high))[0]
+            
+            if len(window_indices) > 1:
+                # Weight function: Gaussian-like weighting centered on f_center
+                window_freqs = freq[window_indices]
+                weights = np.exp(-0.5 * ((window_freqs - f_center) / (bandwidth / 4)) ** 2)
+                
+                # Weighted average in linear domain for proper energy conservation
+                window_mag_linear = 10 ** (mag[window_indices] / 10.0)
+                weighted_avg_linear = np.average(window_mag_linear, weights=weights)
+                
+                # Convert back to dB
+                smoothed[i] = 10 * np.log10(weighted_avg_linear + 1e-20)
+        
+        return smoothed
+        
+    except Exception as e:
+        raise RuntimeError(f"Psychoacoustic smoothing failed: {str(e)}")
 
 
 def summarize_fft_log_frequency(frequencies: np.ndarray, magnitudes: np.ndarray, 

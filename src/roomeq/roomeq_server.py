@@ -315,6 +315,7 @@ def analyze_fft():
     duration_str = request.args.get("duration")
     normalize_str = request.args.get("normalize")
     points_per_octave_str = request.args.get("points_per_octave")
+    psychoacoustic_smoothing_str = request.args.get("psychoacoustic_smoothing")
     
     # Validate parameters
     if not filename and not filepath:
@@ -376,12 +377,17 @@ def analyze_fft():
         except ValueError:
             abort(400, "Invalid points_per_octave: must be an integer")
     
+    psychoacoustic_smoothing = None
+    if psychoacoustic_smoothing_str:
+        psychoacoustic_smoothing = validate_float_param("psychoacoustic_smoothing", psychoacoustic_smoothing_str, 0.1, 5.0)
+    
     try:
         # Validate parameters using FFT module
         validate_fft_parameters(fft_size, window_type)
         
         # Use FFT module for analysis
-        result = analyze_wav_file(target_file, window_type, fft_size, start_time, duration, normalize, points_per_octave)
+        result = analyze_wav_file(target_file, window_type, fft_size, start_time, duration, normalize, 
+                                points_per_octave, psychoacoustic_smoothing)
         
         # Prepare response
         response = {
@@ -438,6 +444,7 @@ def analyze_fft_recording(recording_id: str):
         duration_str = request.args.get("duration")
         normalize_str = request.args.get("normalize")
         points_per_octave_str = request.args.get("points_per_octave")
+        psychoacoustic_smoothing_str = request.args.get("psychoacoustic_smoothing")
         
         logger.debug(f"FFT analysis parameters for {recording_id}: window={window_type}, "
                     f"fft_size={fft_size_str}, start_time={start_time_str}, start_at={start_at_str}, "
@@ -483,13 +490,18 @@ def analyze_fft_recording(recording_id: str):
             except ValueError:
                 abort(400, "Invalid points_per_octave: must be an integer")
         
+        psychoacoustic_smoothing = None
+        if psychoacoustic_smoothing_str:
+            psychoacoustic_smoothing = validate_float_param("psychoacoustic_smoothing", psychoacoustic_smoothing_str, 0.1, 5.0)
+        
         # Validate parameters using FFT module
         validate_fft_parameters(fft_size, window_type)
         
         logger.info(f"Starting FFT analysis for recording {recording_id} on file {filepath}")
         
         # Use FFT module for analysis
-        result = analyze_wav_file(filepath, window_type, fft_size, start_time, duration, normalize, points_per_octave)
+        result = analyze_wav_file(filepath, window_type, fft_size, start_time, duration, normalize, 
+                                points_per_octave, psychoacoustic_smoothing)
         
         # Prepare response with recording context
         response = {
@@ -1199,14 +1211,16 @@ def root():
                     "start_at": "Alternative to start_time - start analysis at time in seconds (default: 0)",
                     "duration": "Analyze duration in seconds (0.1-300, default: entire file)",
                     "normalize": "Normalize to frequency in Hz (0.1-50000, optional)",
-                    "points_per_octave": "Summarize to log frequency buckets (1-100, optional)"
+                    "points_per_octave": "Summarize to log frequency buckets (1-100, optional)",
+                    "psychoacoustic_smoothing": "Apply psychoacoustic smoothing (0.1-5.0, optional)"
                 },
                 "examples": {
                     "basic": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav'",
                     "with_start_at": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&start_at=2.5&duration=10'",
                     "with_summarization": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&points_per_octave=16'",
                     "external_file": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filepath=/path/to/file.wav&window=hann&normalize=1000'",
-                    "recording_analysis": "curl -X POST 'http://localhost:10315/audio/analyze/fft-recording/abc12345?points_per_octave=12&start_at=1.0'"
+                    "with_psychoacoustic_smoothing": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&psychoacoustic_smoothing=1.0&points_per_octave=16'",
+                    "recording_analysis": "curl -X POST 'http://localhost:10315/audio/analyze/fft-recording/abc12345?points_per_octave=12&start_at=1.0&psychoacoustic_smoothing=1.5'"
                 }
             },
             "playback_control": {

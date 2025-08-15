@@ -364,6 +364,7 @@ Perform FFT (Fast Fourier Transform) spectral analysis on a WAV file.
 - `duration` (float, optional): Duration to analyze in seconds (default: entire file from start_time)
 - `normalize` (float, optional): Frequency in Hz to normalize to 0 dB (all other levels adjusted relative to this frequency)
 - `points_per_octave` (integer, optional): Summarize FFT into logarithmic frequency buckets (1-100, enables log frequency summarization)
+- `psychoacoustic_smoothing` (float, optional): Apply psychoacoustic smoothing with critical band filtering (0.1-5.0, where 1.0 is normal strength)
 
 **Note:** Must specify either `filename` OR `filepath`, not both. Use either `start_time` OR `start_at`, not both (start_at takes precedence if both are provided).
 
@@ -543,6 +544,7 @@ Perform FFT analysis on a specific recording by ID.
 - `duration` (float, optional): Duration to analyze in seconds
 - `normalize` (float, optional): Frequency in Hz to normalize to 0 dB
 - `points_per_octave` (integer, optional): Summarize FFT into logarithmic frequency buckets (1-100)
+- `psychoacoustic_smoothing` (float, optional): Apply psychoacoustic smoothing (0.1-5.0)
 
 **Note:** Use either `start_time` OR `start_at`, not both (start_at takes precedence if both are provided).
 
@@ -815,6 +817,9 @@ curl -X POST "http://localhost:10315/audio/analyze/fft?filename=recording_abc123
 # High-resolution log frequency analysis (24 points per octave) with normalization
 curl -X POST "http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&points_per_octave=24&normalize=1000&window=hann"
 
+# With psychoacoustic smoothing for cleaner visual presentation
+curl -X POST "http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&psychoacoustic_smoothing=1.0&points_per_octave=16"
+
 # Analyze specific time segment with custom FFT size
 curl -X POST "http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&start_time=5&duration=10&fft_size=16384&points_per_octave=12"
 
@@ -824,8 +829,8 @@ curl -X POST "http://localhost:10315/audio/analyze/fft?filename=recording_abc123
 # Analyze external WAV file with log frequency summarization
 curl -X POST "http://localhost:10315/audio/analyze/fft?filepath=/path/to/measurement.wav&points_per_octave=16"
 
-# Direct analysis of recording by ID (with log frequency summary)
-curl -X POST "http://localhost:10315/audio/analyze/fft-recording/abc12345?points_per_octave=16&normalize=1000"
+# Direct analysis of recording by ID (with log frequency summary and psychoacoustic smoothing)
+curl -X POST "http://localhost:10315/audio/analyze/fft-recording/abc12345?points_per_octave=16&normalize=1000&psychoacoustic_smoothing=1.5"
 ```
 
 **Common points_per_octave values:**
