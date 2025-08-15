@@ -216,7 +216,7 @@ class SignalGenerator:
             return False
     
     def play_sine_sweep(self, start_freq: float = 20, end_freq: float = 20000, 
-                       duration: float = 10, amplitude: float = 0.5):
+                       duration: float = 10, amplitude: float = 0.5, repeats: int = 1):
         """
         Play sine sweep (logarithmic).
         
@@ -225,6 +225,7 @@ class SignalGenerator:
             end_freq: Ending frequency in Hz (default: 20000)
             duration: Duration in seconds (default: 10)
             amplitude: Amplitude scaling (0.0 to 1.0)
+            repeats: Number of times to repeat the sweep (default: 1)
             
         Returns:
             True if started successfully
@@ -236,10 +237,26 @@ class SignalGenerator:
         try:
             duration_samples = int(duration * self.sample_rate)
             
-            print(f"Playing sine sweep: {start_freq} Hz → {end_freq} Hz over {duration} seconds at {amplitude:.1%} amplitude...")
+            if repeats == 1:
+                print(f"Playing sine sweep: {start_freq} Hz → {end_freq} Hz over {duration} seconds at {amplitude:.1%} amplitude...")
+            else:
+                total_duration = duration * repeats
+                print(f"Playing {repeats} sine sweeps: {start_freq} Hz → {end_freq} Hz, {duration}s each (total: {total_duration}s) at {amplitude:.1%} amplitude...")
             
-            # Generate sweep samples
-            samples = self._generate_sine_sweep(start_freq, end_freq, duration_samples, amplitude)
+            # Generate single sweep samples
+            single_sweep = self._generate_sine_sweep(start_freq, end_freq, duration_samples, amplitude)
+            
+            # If multiple repeats, concatenate the sweep samples
+            if repeats > 1:
+                # Create array for all sweeps
+                if len(single_sweep.shape) == 1:
+                    # Mono
+                    samples = np.tile(single_sweep, repeats)
+                else:
+                    # Stereo
+                    samples = np.tile(single_sweep, (repeats, 1))
+            else:
+                samples = single_sweep
             
             # Start playback in separate thread
             self.stop_playback = False

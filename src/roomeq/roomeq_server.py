@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-from flask import Flask, jsonify, request, abort
+from flask import Flask, jsonify, request, abort, send_file
 from flask_cors import CORS
 from typing import List, Dict, Any, Optional
 import logging
 import threading
 import time
+import tempfile
+import os
+import subprocess
+import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from .microphone import MicrophoneDetector, detect_microphones
 from .analysis import measure_spl
@@ -21,8 +26,19 @@ _playback_state = {
     'active': False,
     'stop_time': None,
     'amplitude': 0.5,
-    'device': None
+    'device': None,
+    'signal_type': 'noise',  # 'noise' or 'sine_sweep'
+    'start_freq': None,
+    'end_freq': None,
+    'sweeps': None,
+    'sweep_duration': None,
+    'total_duration': None
 }
+
+# Global recording state and file management
+_temp_dir = tempfile.mkdtemp(prefix="roomeq_recordings_")
+_active_recordings = {}  # {recording_id: {"thread": thread, "filename": filename, "status": status}}
+_completed_recordings = {}  # {recording_id: {"filename": filename, "timestamp": datetime, "duration": float}}
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
@@ -47,6 +63,102 @@ def validate_float_param(param_name: str, value: str, min_val: float = None, max
         return val
     except ValueError:
         abort(400, f"Invalid {param_name}: must be a number")
+
+
+def _recording_worker(recording_id: str, device: str, duration: float, sample_rate: int = 48000):
+    """Background worker for audio recording."""
+    global _active_recordings, _completed_recordings
+    
+    filename = f"recording_{recording_id}.wav"
+    filepath = os.path.join(_temp_dir, filename)
+    
+    try:
+        logger.info(f"Starting recording {recording_id}: {duration}s on device {device}")
+        
+        # Update status to recording
+        _active_recordings[recording_id]["status"] = "recording"
+        
+        # Use arecord to capture audio
+        cmd = [
+            'arecord',
+            '-D', device,
+            '-f', 'S16_LE',
+            '-c', '1',  # Mono recording
+            '-r', str(sample_rate),
+            '-d', str(int(duration)) if duration == int(duration) else str(duration),
+            filepath
+        ]
+        
+        start_time = datetime.now()
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=duration + 10)
+        end_time = datetime.now()
+        
+        if result.returncode == 0:
+            # Recording successful
+            actual_duration = (end_time - start_time).total_seconds()
+            
+            # Move to completed recordings
+            _completed_recordings[recording_id] = {
+                "filename": filename,
+                "filepath": filepath,
+                "timestamp": start_time,
+                "duration": actual_duration,
+                "device": device,
+                "sample_rate": sample_rate
+            }
+            
+            logger.info(f"Recording {recording_id} completed successfully: {actual_duration:.1f}s")
+            
+        else:
+            logger.error(f"Recording {recording_id} failed: {result.stderr}")
+            # Clean up failed recording file
+            try:
+                os.unlink(filepath)
+            except:
+                pass
+                
+    except subprocess.TimeoutExpired:
+        logger.error(f"Recording {recording_id} timed out")
+        try:
+            os.unlink(filepath)
+        except:
+            pass
+    except Exception as e:
+        logger.error(f"Recording {recording_id} error: {e}")
+        try:
+            os.unlink(filepath)
+        except:
+            pass
+    finally:
+        # Remove from active recordings
+        if recording_id in _active_recordings:
+            del _active_recordings[recording_id]
+
+
+def _validate_recording_file(filename: str) -> str:
+    """Validate and sanitize recording filename for security."""
+    # Only allow wav files
+    if not filename.endswith('.wav'):
+        abort(400, "Only WAV files are allowed")
+    
+    # Remove any path components for security
+    filename = os.path.basename(filename)
+    
+    # Check if file exists in temp directory
+    filepath = os.path.join(_temp_dir, filename)
+    if not os.path.exists(filepath):
+        abort(404, "Recording file not found")
+    
+    # Ensure file is actually in our temp directory (prevent directory traversal)
+    try:
+        real_temp = os.path.realpath(_temp_dir)
+        real_file = os.path.realpath(filepath)
+        if not real_file.startswith(real_temp):
+            abort(403, "Access denied")
+    except:
+        abort(403, "Access denied")
+    
+    return filepath
 
 
 @app.route("/version", methods=["GET"])
@@ -188,6 +300,330 @@ def _monitor_playback():
             break
 
 
+@app.route("/audio/record/start", methods=["POST"])
+def start_recording():
+    """Start recording audio to a WAV file in background."""
+    global _active_recordings
+    
+    try:
+        duration_str = request.args.get("duration", "10.0")
+        device = request.args.get("device")
+        sample_rate_str = request.args.get("sample_rate", "48000")
+        
+        duration = validate_float_param("duration", duration_str, 1.0, 300.0)  # Max 5 minutes
+        
+        try:
+            sample_rate = int(sample_rate_str)
+            if sample_rate not in [8000, 16000, 22050, 44100, 48000, 96000]:
+                abort(400, "sample_rate must be one of: 8000, 16000, 22050, 44100, 48000, 96000")
+        except ValueError:
+            abort(400, "Invalid sample_rate: must be an integer")
+        
+        # Auto-detect device if not specified
+        if device is None:
+            try:
+                detector = MicrophoneDetector()
+                microphones = detector.detect_microphones()
+                if not microphones:
+                    abort(500, "No microphone detected")
+                card_id = microphones[0][0]
+                device = f"hw:{card_id},0"
+            except Exception as e:
+                abort(500, f"Failed to detect microphone: {str(e)}")
+        
+        # Generate unique recording ID
+        recording_id = str(uuid.uuid4())[:8]  # Short UUID for easier handling
+        
+        # Create recording entry
+        _active_recordings[recording_id] = {
+            "thread": None,
+            "filename": f"recording_{recording_id}.wav",
+            "status": "starting",
+            "device": device,
+            "duration": duration,
+            "sample_rate": sample_rate,
+            "start_time": datetime.now()
+        }
+        
+        # Start recording thread
+        recording_thread = threading.Thread(
+            target=_recording_worker,
+            args=(recording_id, device, duration, sample_rate),
+            daemon=True
+        )
+        _active_recordings[recording_id]["thread"] = recording_thread
+        recording_thread.start()
+        
+        logger.info(f"Started recording {recording_id}: {duration}s on {device} at {sample_rate}Hz")
+        
+        return jsonify({
+            "status": "started",
+            "recording_id": recording_id,
+            "filename": f"recording_{recording_id}.wav",
+            "duration": duration,
+            "device": device,
+            "sample_rate": sample_rate,
+            "estimated_completion": (datetime.now() + timedelta(seconds=duration)).isoformat(),
+            "message": f"Recording started: {duration}s at {sample_rate}Hz"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error starting recording: {e}")
+        abort(500, f"Failed to start recording: {str(e)}")
+
+
+@app.route("/audio/record/status/<recording_id>", methods=["GET"])
+def get_recording_status(recording_id: str):
+    """Get the status of a specific recording."""
+    global _active_recordings, _completed_recordings
+    
+    # Check active recordings
+    if recording_id in _active_recordings:
+        recording = _active_recordings[recording_id]
+        elapsed = (datetime.now() - recording["start_time"]).total_seconds()
+        remaining = max(0, recording["duration"] - elapsed)
+        
+        return jsonify({
+            "recording_id": recording_id,
+            "status": recording["status"],
+            "filename": recording["filename"],
+            "device": recording["device"],
+            "duration": recording["duration"],
+            "sample_rate": recording["sample_rate"],
+            "elapsed_seconds": round(elapsed, 1),
+            "remaining_seconds": round(remaining, 1),
+            "completed": False
+        })
+    
+    # Check completed recordings
+    if recording_id in _completed_recordings:
+        recording = _completed_recordings[recording_id]
+        return jsonify({
+            "recording_id": recording_id,
+            "status": "completed",
+            "filename": recording["filename"],
+            "device": recording["device"],
+            "duration": recording["duration"],
+            "sample_rate": recording["sample_rate"],
+            "timestamp": recording["timestamp"].isoformat(),
+            "completed": True,
+            "file_available": os.path.exists(recording["filepath"])
+        })
+    
+    abort(404, f"Recording {recording_id} not found")
+
+
+@app.route("/audio/record/list", methods=["GET"])
+def list_recordings():
+    """List all recordings (active and completed)."""
+    global _active_recordings, _completed_recordings
+    
+    active = []
+    for recording_id, recording in _active_recordings.items():
+        elapsed = (datetime.now() - recording["start_time"]).total_seconds()
+        remaining = max(0, recording["duration"] - elapsed)
+        
+        active.append({
+            "recording_id": recording_id,
+            "status": recording["status"],
+            "filename": recording["filename"],
+            "elapsed_seconds": round(elapsed, 1),
+            "remaining_seconds": round(remaining, 1)
+        })
+    
+    completed = []
+    for recording_id, recording in _completed_recordings.items():
+        completed.append({
+            "recording_id": recording_id,
+            "filename": recording["filename"],
+            "duration": recording["duration"],
+            "timestamp": recording["timestamp"].isoformat(),
+            "file_available": os.path.exists(recording["filepath"])
+        })
+    
+    return jsonify({
+        "active_recordings": active,
+        "completed_recordings": completed,
+        "temp_directory": _temp_dir
+    })
+
+
+@app.route("/audio/record/download/<recording_id>", methods=["GET"])
+def download_recording(recording_id: str):
+    """Download a completed recording file."""
+    global _completed_recordings
+    
+    if recording_id not in _completed_recordings:
+        abort(404, f"Recording {recording_id} not found")
+    
+    recording = _completed_recordings[recording_id]
+    filepath = recording["filepath"]
+    
+    if not os.path.exists(filepath):
+        abort(404, "Recording file no longer available")
+    
+    return send_file(
+        filepath,
+        as_attachment=True,
+        download_name=recording["filename"],
+        mimetype="audio/wav"
+    )
+
+
+@app.route("/audio/record/delete/<recording_id>", methods=["DELETE"])
+def delete_recording(recording_id: str):
+    """Delete a specific recording file."""
+    global _completed_recordings
+    
+    if recording_id not in _completed_recordings:
+        abort(404, f"Recording {recording_id} not found")
+    
+    recording = _completed_recordings[recording_id]
+    filepath = recording["filepath"]
+    
+    try:
+        # Security check - ensure file is in temp directory
+        _validate_recording_file(recording["filename"])
+        
+        if os.path.exists(filepath):
+            os.unlink(filepath)
+            logger.info(f"Deleted recording {recording_id}: {recording['filename']}")
+            
+        # Remove from completed recordings
+        del _completed_recordings[recording_id]
+        
+        return jsonify({
+            "status": "deleted",
+            "recording_id": recording_id,
+            "filename": recording["filename"],
+            "message": f"Recording {recording_id} deleted successfully"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error deleting recording {recording_id}: {e}")
+        abort(500, f"Failed to delete recording: {str(e)}")
+
+
+@app.route("/audio/record/delete-file/<filename>", methods=["DELETE"])
+def delete_recording_file(filename: str):
+    """Delete a recording file by filename (for security, only allows files in temp directory)."""
+    try:
+        filepath = _validate_recording_file(filename)
+        
+        os.unlink(filepath)
+        logger.info(f"Deleted recording file: {filename}")
+        
+        # Also remove from completed recordings if present
+        recording_id_to_remove = None
+        for recording_id, recording in _completed_recordings.items():
+            if recording["filename"] == filename:
+                recording_id_to_remove = recording_id
+                break
+        
+        if recording_id_to_remove:
+            del _completed_recordings[recording_id_to_remove]
+        
+        return jsonify({
+            "status": "deleted",
+            "filename": filename,
+            "message": f"Recording file {filename} deleted successfully"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error deleting recording file {filename}: {e}")
+        abort(500, f"Failed to delete recording file: {str(e)}")
+
+
+@app.route("/audio/sweep/start", methods=["POST"])
+def start_sine_sweep():
+    """Start playing a sine sweep for the specified duration."""
+    global _signal_generator, _playback_state
+    
+    try:
+        duration_str = request.args.get("duration", "5.0")
+        amplitude_str = request.args.get("amplitude", "0.5")
+        start_freq_str = request.args.get("start_freq", "20")
+        end_freq_str = request.args.get("end_freq", "20000")
+        sweeps_str = request.args.get("sweeps", "1")
+        device = request.args.get("device")
+        
+        duration = validate_float_param("duration", duration_str, 1.0, 30.0)
+        amplitude = validate_float_param("amplitude", amplitude_str, 0.0, 1.0)
+        start_freq = validate_float_param("start_freq", start_freq_str, 10.0, 22000.0)
+        end_freq = validate_float_param("end_freq", end_freq_str, 10.0, 22000.0)
+        
+        try:
+            sweeps = int(sweeps_str)
+            if sweeps < 1 or sweeps > 10:
+                abort(400, "sweeps must be between 1 and 10")
+        except ValueError:
+            abort(400, "Invalid sweeps: must be an integer")
+        
+        if start_freq >= end_freq:
+            abort(400, "start_freq must be less than end_freq")
+        
+        # Calculate total duration
+        total_duration = duration * sweeps
+        
+        # Stop any existing playback
+        if _signal_generator and _playback_state['active']:
+            _signal_generator.stop()
+            _playback_state['active'] = False
+        
+        # Create new generator
+        _signal_generator = SignalGenerator(device=device)
+        
+        # Set initial stop time based on total duration
+        stop_time = datetime.now() + timedelta(seconds=total_duration)
+        
+        # Update playback state
+        _playback_state.update({
+            'active': True,
+            'stop_time': stop_time,
+            'amplitude': amplitude,
+            'device': device,
+            'signal_type': 'sine_sweep',
+            'start_freq': start_freq,
+            'end_freq': end_freq,
+            'sweeps': sweeps,
+            'sweep_duration': duration,
+            'total_duration': total_duration
+        })
+        
+        # Start playing multiple sine sweeps
+        _signal_generator.play_sine_sweep(
+            start_freq=start_freq,
+            end_freq=end_freq,
+            duration=duration,
+            amplitude=amplitude,
+            repeats=sweeps
+        )
+        
+        # Start monitor thread
+        monitor_thread = threading.Thread(target=_monitor_playback, daemon=True)
+        monitor_thread.start()
+        
+        logger.info(f"Started {sweeps} sine sweep(s): {start_freq} Hz → {end_freq} Hz, {duration}s each, total {total_duration}s at {amplitude*100:.0f}% amplitude")
+        
+        return jsonify({
+            "status": "started",
+            "signal_type": "sine_sweep",
+            "start_freq": start_freq,
+            "end_freq": end_freq,
+            "duration": duration,
+            "sweeps": sweeps,
+            "total_duration": total_duration,
+            "amplitude": amplitude,
+            "device": device or "default",
+            "stop_time": stop_time.isoformat(),
+            "message": f"{sweeps} sine sweep(s) started: {start_freq} Hz → {end_freq} Hz, {duration}s each (total: {total_duration}s)"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error starting sine sweep: {e}")
+        abort(500, f"Failed to start sine sweep: {str(e)}")
+
+
 @app.route("/audio/noise/start", methods=["POST"])
 def start_noise():
     """Start playing white noise for the specified duration."""
@@ -217,7 +653,13 @@ def start_noise():
             'active': True,
             'stop_time': stop_time,
             'amplitude': amplitude,
-            'device': device
+            'device': device,
+            'signal_type': 'noise',
+            'start_freq': None,
+            'end_freq': None,
+            'sweeps': None,
+            'sweep_duration': None,
+            'total_duration': None
         })
         
         # Start playing noise (infinite duration, will be stopped by monitor)
@@ -303,7 +745,7 @@ def stop_noise():
 
 @app.route("/audio/noise/status", methods=["GET"])
 def get_noise_status():
-    """Get the current status of noise playbook."""
+    """Get the current status of audio playback (noise or sine sweep)."""
     global _playback_state
     
     if _playback_state['active'] and _playback_state['stop_time']:
@@ -312,38 +754,249 @@ def get_noise_status():
     else:
         remaining_time = 0
     
-    return jsonify({
+    status = {
         "active": _playback_state['active'],
+        "signal_type": _playback_state['signal_type'],
         "amplitude": _playback_state['amplitude'],
         "device": _playback_state['device'] or "default",
         "remaining_seconds": round(remaining_time, 1),
         "stop_time": _playback_state['stop_time'].isoformat() if _playback_state['stop_time'] else None
-    })
+    }
+    
+    # Add frequency information for sine sweeps
+    if _playback_state['signal_type'] == 'sine_sweep':
+        status.update({
+            "start_freq": _playback_state['start_freq'],
+            "end_freq": _playback_state['end_freq'],
+            "sweeps": _playback_state['sweeps'],
+            "sweep_duration": _playback_state['sweep_duration'],
+            "total_duration": _playback_state['total_duration']
+        })
+    
+    return jsonify(status)
 
 
 @app.route("/", methods=["GET"])
 def root():
-    """Root endpoint with API information."""
+    """Root endpoint with comprehensive API information."""
     return jsonify({
         "message": "RoomEQ Audio Processing API",
         "version": "0.2.0",
-        "description": "REST API for microphone detection, SPL measurement, and audio signal generation",
+        "framework": "Flask",
+        "description": "REST API for microphone detection, SPL measurement, and audio signal generation for acoustic measurements and room equalization",
+        "features": [
+            "Automatic microphone detection with sensitivity and gain information",
+            "Real-time SPL (Sound Pressure Level) measurement",
+            "White noise generation with keep-alive control",
+            "Logarithmic sine sweep generation with multiple repeat support",
+            "Real-time playback management and status monitoring",
+            "Cross-Origin Resource Sharing (CORS) support for web applications"
+        ],
         "endpoints": {
-            "info": ["/", "/version"],
-            "microphones": ["/microphones", "/microphones/raw"],
-            "audio_devices": ["/audio/inputs", "/audio/cards"],
-            "measurements": ["/spl/measure"],
-            "signal_generation": [
-                "/audio/noise/start",
-                "/audio/noise/keep-playing", 
-                "/audio/noise/stop",
-                "/audio/noise/status"
-            ]
+            "info": {
+                "/": "API information and documentation",
+                "/version": "API version and feature list"
+            },
+            "microphones": {
+                "/microphones": "Detect microphones with calibration data",
+                "/microphones/raw": "Raw microphone detection (bash script compatible)"
+            },
+            "audio_devices": {
+                "/audio/inputs": "List audio input card indices",
+                "/audio/cards": "List all available audio cards"
+            },
+            "measurements": {
+                "/spl/measure": "Measure sound pressure level and RMS"
+            },
+            "signal_generation": {
+                "/audio/noise/start": "Start white noise playback",
+                "/audio/noise/keep-playing": "Extend current noise playback",
+                "/audio/noise/stop": "Stop current playback immediately",
+                "/audio/noise/status": "Get current playback status",
+                "/audio/sweep/start": "Start sine sweep(s) with multiple repeat support"
+            },
+            "recording": {
+                "/audio/record/start": "Start recording audio to WAV file in background",
+                "/audio/record/status/<recording_id>": "Get status of specific recording",
+                "/audio/record/list": "List all recordings (active and completed)",
+                "/audio/record/download/<recording_id>": "Download completed recording",
+                "/audio/record/delete/<recording_id>": "Delete specific recording",
+                "/audio/record/delete-file/<filename>": "Delete recording file by name"
+            }
         },
-        "usage": {
-            "start_noise": "POST /audio/noise/start?duration=3&amplitude=0.5",
-            "keep_playing": "POST /audio/noise/keep-playing?duration=3",
-            "measure_spl": "GET /spl/measure?duration=1.0"
+        "usage_examples": {
+            "microphone_detection": {
+                "description": "Detect available microphones with calibration information",
+                "method": "GET",
+                "url": "/microphones",
+                "example": "curl -X GET http://localhost:10315/microphones"
+            },
+            "spl_measurement": {
+                "description": "Measure sound pressure level using detected microphone",
+                "method": "GET", 
+                "url": "/spl/measure",
+                "parameters": {
+                    "device": "ALSA device (optional, auto-detects if not specified)",
+                    "duration": "Measurement duration in seconds (0.1-10.0, default: 1.0)"
+                },
+                "example": "curl -X GET 'http://localhost:10315/spl/measure?duration=2.0'"
+            },
+            "white_noise": {
+                "description": "Generate white noise for acoustic testing",
+                "method": "POST",
+                "url": "/audio/noise/start", 
+                "parameters": {
+                    "duration": "Playback duration in seconds (1.0-30.0, default: 3.0)",
+                    "amplitude": "Amplitude level (0.0-1.0, default: 0.5)",
+                    "device": "Output device (optional, auto-detects if not specified)"
+                },
+                "example": "curl -X POST 'http://localhost:10315/audio/noise/start?duration=5&amplitude=0.3'"
+            },
+            "sine_sweep_single": {
+                "description": "Generate single logarithmic sine sweep",
+                "method": "POST",
+                "url": "/audio/sweep/start",
+                "parameters": {
+                    "start_freq": "Starting frequency in Hz (10-22000, default: 20)",
+                    "end_freq": "Ending frequency in Hz (10-22000, default: 20000)", 
+                    "duration": "Sweep duration in seconds (1.0-30.0, default: 5.0)",
+                    "amplitude": "Amplitude level (0.0-1.0, default: 0.5)",
+                    "device": "Output device (optional, auto-detects if not specified)"
+                },
+                "example": "curl -X POST 'http://localhost:10315/audio/sweep/start?start_freq=20&end_freq=20000&duration=10&amplitude=0.4'"
+            },
+            "sine_sweep_multiple": {
+                "description": "Generate multiple consecutive sine sweeps for averaging",
+                "method": "POST",
+                "url": "/audio/sweep/start",
+                "parameters": {
+                    "start_freq": "Starting frequency in Hz (10-22000, default: 20)",
+                    "end_freq": "Ending frequency in Hz (10-22000, default: 20000)",
+                    "duration": "Duration per sweep in seconds (1.0-30.0, default: 5.0)", 
+                    "sweeps": "Number of consecutive sweeps (1-10, default: 1)",
+                    "amplitude": "Amplitude level (0.0-1.0, default: 0.5)",
+                    "device": "Output device (optional, auto-detects if not specified)"
+                },
+                "example": "curl -X POST 'http://localhost:10315/audio/sweep/start?start_freq=20&end_freq=20000&duration=8&sweeps=3&amplitude=0.3'"
+            },
+            "keep_alive": {
+                "description": "Extend current playback to prevent automatic stop",
+                "method": "POST",
+                "url": "/audio/noise/keep-playing",
+                "parameters": {
+                    "duration": "Additional duration in seconds (1.0-30.0, default: 3.0)"
+                },
+                "example": "curl -X POST 'http://localhost:10315/audio/noise/keep-playing?duration=5'"
+            },
+            "audio_recording": {
+                "description": "Record audio to WAV file in background",
+                "method": "POST",
+                "url": "/audio/record/start",
+                "parameters": {
+                    "duration": "Recording duration in seconds (1.0-300.0, default: 10.0)",
+                    "device": "Input device (optional, auto-detects if not specified)",
+                    "sample_rate": "Sample rate in Hz (8000|16000|22050|44100|48000|96000, default: 48000)"
+                },
+                "example": "curl -X POST 'http://localhost:10315/audio/record/start?duration=30&sample_rate=48000'"
+            },
+            "recording_management": {
+                "list_recordings": "curl -X GET http://localhost:10315/audio/record/list",
+                "check_status": "curl -X GET http://localhost:10315/audio/record/status/abc12345",
+                "download": "curl -X GET http://localhost:10315/audio/record/download/abc12345 -o recording.wav",
+                "delete_by_id": "curl -X DELETE http://localhost:10315/audio/record/delete/abc12345",
+                "delete_by_filename": "curl -X DELETE http://localhost:10315/audio/record/delete-file/recording_abc12345.wav"
+            },
+            "playback_control": {
+                "stop": "curl -X POST http://localhost:10315/audio/noise/stop",
+                "status": "curl -X GET http://localhost:10315/audio/noise/status"
+            }
+        },
+        "response_formats": {
+            "microphones": {
+                "description": "Array of microphone objects with calibration data",
+                "example": [
+                    {
+                        "card_index": 1,
+                        "device_name": "HiFiBerry Mic",
+                        "sensitivity": -37.0,
+                        "sensitivity_str": "-37",
+                        "gain_db": 20
+                    }
+                ]
+            },
+            "spl_measurement": {
+                "description": "SPL measurement with microphone calibration applied", 
+                "example": {
+                    "spl_db": 45.2,
+                    "rms_db_fs": -42.1,
+                    "device": "hw:1,0",
+                    "duration": 1.0,
+                    "microphone": {
+                        "sensitivity": -37.0,
+                        "gain_db": 20,
+                        "effective_sensitivity": -57.0
+                    },
+                    "timestamp": 1692123456.789,
+                    "success": True
+                }
+            },
+            "playback_status": {
+                "description": "Current playback status with detailed information",
+                "example": {
+                    "active": True,
+                    "signal_type": "sine_sweep",
+                    "amplitude": 0.3,
+                    "device": "default", 
+                    "remaining_seconds": 4.2,
+                    "stop_time": "2025-08-15T12:15:30.123456",
+                    "start_freq": 20.0,
+                    "end_freq": 20000.0,
+                    "sweeps": 3,
+                    "sweep_duration": 8.0,
+                    "total_duration": 24.0
+                }
+            },
+            "recording_status": {
+                "description": "Recording status and file information",
+                "active_example": {
+                    "recording_id": "abc12345",
+                    "status": "recording",
+                    "filename": "recording_abc12345.wav",
+                    "device": "hw:1,0",
+                    "duration": 30.0,
+                    "sample_rate": 48000,
+                    "elapsed_seconds": 12.5,
+                    "remaining_seconds": 17.5,
+                    "completed": False
+                },
+                "completed_example": {
+                    "recording_id": "abc12345",
+                    "status": "completed",
+                    "filename": "recording_abc12345.wav",
+                    "device": "hw:1,0",
+                    "duration": 30.0,
+                    "sample_rate": 48000,
+                    "timestamp": "2025-08-15T12:20:00.123456",
+                    "completed": True,
+                    "file_available": True
+                }
+            }
+        },
+        "technical_details": {
+            "audio_format": "16-bit PCM, 48kHz sample rate",
+            "sweep_type": "Logarithmic frequency progression",
+            "noise_type": "White noise with uniform frequency distribution", 
+            "microphone_calibration": "Automatic sensitivity and gain compensation",
+            "device_detection": "ALSA-based audio device enumeration",
+            "playback_monitoring": "Real-time status tracking with automatic timeout",
+            "cors_support": "Cross-origin requests enabled for web applications"
+        },
+        "server_info": {
+            "host": "0.0.0.0",
+            "port": 10315,
+            "framework": "Flask with CORS support",
+            "threading": "Multi-threaded request handling",
+            "audio_backend": "ALSA with arecord fallback for compatibility"
         }
     })
 
