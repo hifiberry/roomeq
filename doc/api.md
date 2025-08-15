@@ -2,19 +2,22 @@
 
 ## Overview
 
-The RoomEQ Audio Processing API provides a REST interface for microphone detection, sound pressure level (SPL) measurement, and audio signal generation. This API is designed for acoustic measurement systems, room correction, and audio testing applications.
+The RoomEQ Audio Processing API provides a comprehensive REST interface for microphone detection, sound pressure level (SPL) measurement, audio signal generation, and recording functionality. This API is designed for acoustic measurement systems, room correction, and audio testing applications.
 
 **Base URL:** `http://localhost:10315`  
 **API Version:** 0.2.0  
-**Documentation:** `http://localhost:10315/docs` (Interactive Swagger UI)  
-**ReDoc:** `http://localhost:10315/redoc` (Alternative documentation)
+**Framework:** Flask with CORS support
+**Documentation:** Available at the root endpoint `/`
 
 ## Features
 
 - **Microphone Detection**: Automatic detection of USB and built-in microphones with sensitivity and gain information
 - **SPL Measurement**: Accurate sound pressure level measurement with calibrated microphones
-- **Signal Generation**: White noise generation with keep-alive functionality for continuous testing
-- **Real-time Control**: Start, stop, and extend audio playback through REST endpoints
+- **Signal Generation**: White noise and logarithmic sine sweep generation with keep-alive functionality
+- **Multiple Sweep Support**: Generate consecutive sine sweeps for acoustic averaging
+- **Audio Recording**: Background recording to WAV files with secure file management
+- **Real-time Control**: Start, stop, extend, and monitor audio operations through REST endpoints
+- **Cross-Origin Support**: CORS enabled for web application integration
 
 ## Authentication
 
@@ -32,23 +35,27 @@ Get API information and endpoint overview.
 {
   "message": "RoomEQ Audio Processing API",
   "version": "0.2.0",
-  "description": "REST API for microphone detection, SPL measurement, and audio signal generation",
+  "framework": "Flask",
+  "description": "REST API for microphone detection, SPL measurement, and audio signal generation for acoustic measurements and room equalization",
   "endpoints": {
-    "info": ["/", "/version", "/docs", "/redoc"],
-    "microphones": ["/microphones", "/microphones/raw"],
-    "audio_devices": ["/audio/inputs", "/audio/cards"],
-    "measurements": ["/spl/measure"],
-    "signal_generation": [
-      "/audio/noise/start",
-      "/audio/noise/keep-playing", 
-      "/audio/noise/stop",
-      "/audio/noise/status"
-    ]
-  },
-  "usage": {
-    "start_noise": "POST /audio/noise/start?duration=3&amplitude=0.5",
-    "keep_playing": "POST /audio/noise/keep-playing?duration=3",
-    "measure_spl": "GET /spl/measure?duration=1.0"
+    "info": {"/": "API information", "/version": "Version details"},
+    "microphones": {"/microphones": "Detect microphones", "/microphones/raw": "Raw detection"},
+    "audio_devices": {"/audio/inputs": "Input cards", "/audio/cards": "All cards"},
+    "measurements": {"/spl/measure": "SPL measurement"},
+    "signal_generation": {
+      "/audio/noise/start": "White noise playback",
+      "/audio/noise/keep-playing": "Extend playback", 
+      "/audio/noise/stop": "Stop playback",
+      "/audio/noise/status": "Playback status",
+      "/audio/sweep/start": "Sine sweep generation"
+    },
+    "recording": {
+      "/audio/record/start": "Start recording",
+      "/audio/record/status/<id>": "Recording status",
+      "/audio/record/list": "List recordings",
+      "/audio/record/download/<id>": "Download recording",
+      "/audio/record/delete/<id>": "Delete recording"
+    }
   }
 }
 ```
@@ -63,9 +70,12 @@ Get detailed version information.
   "api_name": "RoomEQ Audio Processing API",
   "features": [
     "Microphone detection with sensitivity and gain",
-    "SPL measurement",
+    "SPL measurement with microphone calibration",
     "White noise generation with keep-alive control",
-    "Real-time playback management"
+    "Logarithmic sine sweep generation with multiple repeat support",
+    "Background audio recording to WAV files",
+    "Real-time playback and recording management",
+    "Cross-Origin Resource Sharing (CORS) support"
   ]
 }
 ```
@@ -261,11 +271,208 @@ Get current noise playback status.
 ```
 
 **Response Fields:**
-- `active`: Whether noise is currently playing
+- `active`: Whether audio is currently playing
+- `signal_type`: Type of signal being played ("noise" or "sine_sweep")
 - `amplitude`: Current playback amplitude
 - `device`: Output device being used
 - `remaining_seconds`: Seconds until automatic stop
 - `stop_time`: ISO timestamp when playback will stop
+
+For sine sweeps, additional fields are included:
+- `start_freq`: Starting frequency in Hz
+- `end_freq`: Ending frequency in Hz
+- `sweeps`: Number of consecutive sweeps
+- `sweep_duration`: Duration per sweep in seconds
+- `total_duration`: Total duration of all sweeps
+
+### Sine Sweep Generation
+
+#### POST `/audio/sweep/start`
+Start logarithmic sine sweep(s) with optional multiple repeat support.
+
+**Query Parameters:**
+- `start_freq` (optional): Starting frequency in Hz (10-22000, default: 20)
+- `end_freq` (optional): Ending frequency in Hz (10-22000, default: 20000)
+- `duration` (optional): Duration per sweep in seconds (1.0-30.0, default: 5.0)
+- `sweeps` (optional): Number of consecutive sweeps (1-10, default: 1)
+- `amplitude` (optional): Amplitude level (0.0-1.0, default: 0.5)
+- `device` (optional): Output device (e.g., "hw:0,0"). Uses default if not specified
+
+**Example Requests:**
+```bash
+# Single sweep - full spectrum, 10 seconds
+POST /audio/sweep/start?start_freq=20&end_freq=20000&duration=10&amplitude=0.4
+
+# Multiple sweeps for averaging - 3 consecutive sweeps
+POST /audio/sweep/start?start_freq=100&end_freq=8000&duration=5&sweeps=3&amplitude=0.3
+```
+
+**Response:**
+```json
+{
+  "status": "started",
+  "signal_type": "sine_sweep",
+  "start_freq": 100.0,
+  "end_freq": 8000.0,
+  "duration": 5.0,
+  "sweeps": 3,
+  "total_duration": 15.0,
+  "amplitude": 0.3,
+  "device": "default",
+  "stop_time": "2025-08-15T12:30:45.123456",
+  "message": "3 sine sweep(s) started: 100.0 Hz → 8000.0 Hz, 5.0s each (total: 15.0s)"
+}
+```
+
+**Use Cases:**
+- **Room Response Analysis**: Full spectrum sweeps (20 Hz - 20 kHz)
+- **Speaker Testing**: Focused frequency ranges
+- **Acoustic Averaging**: Multiple sweeps for noise reduction
+- **Automated Measurements**: Scripted measurement sequences
+
+## Audio Recording
+
+### Background Recording to WAV Files
+
+The API supports background recording to WAV files with secure file management. Recordings are stored in a temporary directory and can be managed through REST endpoints.
+
+#### POST `/audio/record/start`
+Start recording audio to a WAV file in background.
+
+**Query Parameters:**
+- `duration` (optional): Recording duration in seconds (1.0-300.0, default: 10.0)
+- `device` (optional): Input device (auto-detects if not specified)
+- `sample_rate` (optional): Sample rate in Hz (8000|16000|22050|44100|48000|96000, default: 48000)
+
+**Example Request:**
+```
+POST /audio/record/start?duration=30&sample_rate=48000
+```
+
+**Response:**
+```json
+{
+  "status": "started",
+  "recording_id": "abc12345",
+  "filename": "recording_abc12345.wav",
+  "duration": 30.0,
+  "device": "hw:1,0",
+  "sample_rate": 48000,
+  "estimated_completion": "2025-08-15T12:31:15.123456",
+  "message": "Recording started: 30.0s at 48000Hz"
+}
+```
+
+#### GET `/audio/record/status/<recording_id>`
+Get the status of a specific recording.
+
+**Example Request:**
+```
+GET /audio/record/status/abc12345
+```
+
+**Response (Active Recording):**
+```json
+{
+  "recording_id": "abc12345",
+  "status": "recording",
+  "filename": "recording_abc12345.wav",
+  "device": "hw:1,0",
+  "duration": 30.0,
+  "sample_rate": 48000,
+  "elapsed_seconds": 12.5,
+  "remaining_seconds": 17.5,
+  "completed": false
+}
+```
+
+**Response (Completed Recording):**
+```json
+{
+  "recording_id": "abc12345",
+  "status": "completed",
+  "filename": "recording_abc12345.wav",
+  "device": "hw:1,0",
+  "duration": 30.0,
+  "sample_rate": 48000,
+  "timestamp": "2025-08-15T12:30:45.123456",
+  "completed": true,
+  "file_available": true
+}
+```
+
+#### GET `/audio/record/list`
+List all recordings (active and completed).
+
+**Response:**
+```json
+{
+  "active_recordings": [
+    {
+      "recording_id": "def67890",
+      "status": "recording",
+      "filename": "recording_def67890.wav",
+      "elapsed_seconds": 5.2,
+      "remaining_seconds": 24.8
+    }
+  ],
+  "completed_recordings": [
+    {
+      "recording_id": "abc12345",
+      "filename": "recording_abc12345.wav",
+      "duration": 30.0,
+      "timestamp": "2025-08-15T12:30:45.123456",
+      "file_available": true
+    }
+  ],
+  "temp_directory": "/tmp/roomeq_recordings_xyz123"
+}
+```
+
+#### GET `/audio/record/download/<recording_id>`
+Download a completed recording file.
+
+**Example Request:**
+```bash
+curl -X GET http://localhost:10315/audio/record/download/abc12345 -o my_recording.wav
+```
+
+**Response:** Binary WAV file download
+
+#### DELETE `/audio/record/delete/<recording_id>`
+Delete a specific recording by ID.
+
+**Example Request:**
+```
+DELETE /audio/record/delete/abc12345
+```
+
+**Response:**
+```json
+{
+  "status": "deleted",
+  "recording_id": "abc12345",
+  "filename": "recording_abc12345.wav",
+  "message": "Recording abc12345 deleted successfully"
+}
+```
+
+#### DELETE `/audio/record/delete-file/<filename>`
+Delete a recording file by filename (secure - only allows files in temp directory).
+
+**Example Request:**
+```
+DELETE /audio/record/delete-file/recording_abc12345.wav
+```
+
+**Response:**
+```json
+{
+  "status": "deleted",
+  "filename": "recording_abc12345.wav",
+  "message": "Recording file recording_abc12345.wav deleted successfully"
+}
+```
 
 ## Usage Examples
 
@@ -293,23 +500,92 @@ curl "http://localhost:10315/audio/noise/status"
 curl -X POST "http://localhost:10315/audio/noise/stop"
 ```
 
+### Sine Sweep Generation
+```bash
+# Single full-spectrum sweep for room analysis
+curl -X POST "http://localhost:10315/audio/sweep/start?start_freq=20&end_freq=20000&duration=10&amplitude=0.4"
+
+# Multiple sweeps for acoustic averaging
+curl -X POST "http://localhost:10315/audio/sweep/start?start_freq=100&end_freq=8000&duration=5&sweeps=3&amplitude=0.3"
+
+# Focused frequency range for speaker testing
+curl -X POST "http://localhost:10315/audio/sweep/start?start_freq=200&end_freq=2000&duration=3&amplitude=0.5"
+
+# Check sweep status (shows sweep details)
+curl "http://localhost:10315/audio/noise/status"
+```
+
+### Audio Recording Workflow
+```bash
+# Start a 30-second recording at 48kHz
+curl -X POST "http://localhost:10315/audio/record/start?duration=30&sample_rate=48000"
+# Response includes recording_id: "abc12345"
+
+# Check recording status
+curl "http://localhost:10315/audio/record/status/abc12345"
+
+# List all recordings
+curl "http://localhost:10315/audio/record/list"
+
+# Download completed recording
+curl -X GET "http://localhost:10315/audio/record/download/abc12345" -o my_recording.wav
+
+# Delete recording when done
+curl -X DELETE "http://localhost:10315/audio/record/delete/abc12345"
+```
+
+### Automated Measurement Sequence
+```bash
+#!/bin/bash
+# Example measurement automation script
+
+API_URL="http://localhost:10315"
+
+echo "Starting automated acoustic measurement..."
+
+# 1. Start background recording for full measurement
+RECORD_RESPONSE=$(curl -s -X POST "$API_URL/audio/record/start?duration=60&sample_rate=48000")
+RECORDING_ID=$(echo "$RECORD_RESPONSE" | grep -o '"recording_id":"[^"]*' | cut -d'"' -f4)
+echo "Started recording: $RECORDING_ID"
+
+# 2. Wait a moment, then start sine sweep
+sleep 2
+curl -s -X POST "$API_URL/audio/sweep/start?start_freq=20&end_freq=20000&duration=15&sweeps=3&amplitude=0.4"
+echo "Started 3 sine sweeps (45 seconds total)"
+
+# 3. Wait for sweeps to complete, then measure ambient
+sleep 50
+SPL_RESULT=$(curl -s "$API_URL/spl/measure?duration=5")
+echo "Ambient SPL measurement: $SPL_RESULT"
+
+# 4. Check recording status
+RECORD_STATUS=$(curl -s "$API_URL/audio/record/status/$RECORDING_ID")
+echo "Recording status: $RECORD_STATUS"
+
+# 5. Download recording when complete
+echo "Measurement sequence complete. Recording ID: $RECORDING_ID"
+echo "Download with: curl '$API_URL/audio/record/download/$RECORDING_ID' -o measurement.wav"
+```
+
 ### Web Application Integration
 ```javascript
-// JavaScript example for web application
-class AudioController {
+// Enhanced JavaScript class for comprehensive audio control
+class RoomEQController {
     constructor(apiUrl = 'http://localhost:10315') {
         this.apiUrl = apiUrl;
         this.keepAliveInterval = null;
+        this.recordingIntervals = new Map(); // Track multiple recordings
     }
     
-    async startNoise(amplitude = 0.5) {
+    // Noise generation with keep-alive
+    async startNoise(amplitude = 0.5, duration = 3) {
         const response = await fetch(
-            `${this.apiUrl}/audio/noise/start?duration=3&amplitude=${amplitude}`, 
+            `${this.apiUrl}/audio/noise/start?duration=${duration}&amplitude=${amplitude}`, 
             { method: 'POST' }
         );
         
         if (response.ok) {
-            // Start keep-alive mechanism - send request every 2 seconds
+            // Start keep-alive mechanism
             this.keepAliveInterval = setInterval(() => {
                 this.keepPlaying();
             }, 2000);
@@ -318,11 +594,12 @@ class AudioController {
         return response.json();
     }
     
-    async keepPlaying() {
+    async keepPlaying(duration = 3) {
         try {
-            await fetch(`${this.apiUrl}/audio/noise/keep-playing?duration=3`, {
+            const response = await fetch(`${this.apiUrl}/audio/noise/keep-playing?duration=${duration}`, {
                 method: 'POST'
             });
+            return response.json();
         } catch (error) {
             console.log('Keep-alive failed:', error);
         }
@@ -341,32 +618,187 @@ class AudioController {
         return response.json();
     }
     
-    async measureSPL(duration = 1.0) {
+    // Sine sweep generation
+    async startSineSweeop(options = {}) {
+        const params = new URLSearchParams({
+            start_freq: options.startFreq || 20,
+            end_freq: options.endFreq || 20000,
+            duration: options.duration || 5,
+            sweeps: options.sweeps || 1,
+            amplitude: options.amplitude || 0.5,
+            ...(options.device && { device: options.device })
+        });
+        
         const response = await fetch(
-            `${this.apiUrl}/spl/measure?duration=${duration}`
+            `${this.apiUrl}/audio/sweep/start?${params}`, 
+            { method: 'POST' }
         );
+        
         return response.json();
+    }
+    
+    // Audio recording
+    async startRecording(duration = 30, sampleRate = 48000, device = null) {
+        const params = new URLSearchParams({
+            duration: duration,
+            sample_rate: sampleRate,
+            ...(device && { device: device })
+        });
+        
+        const response = await fetch(
+            `${this.apiUrl}/audio/record/start?${params}`, 
+            { method: 'POST' }
+        );
+        
+        const result = await response.json();
+        
+        if (response.ok && result.recording_id) {
+            // Monitor recording progress
+            this.monitorRecording(result.recording_id, duration);
+        }
+        
+        return result;
+    }
+    
+    monitorRecording(recordingId, duration) {
+        const interval = setInterval(async () => {
+            try {
+                const status = await this.getRecordingStatus(recordingId);
+                
+                if (status.completed) {
+                    clearInterval(interval);
+                    this.recordingIntervals.delete(recordingId);
+                    console.log(`Recording ${recordingId} completed`);
+                    
+                    // Trigger completion callback if set
+                    if (this.onRecordingComplete) {
+                        this.onRecordingComplete(recordingId, status);
+                    }
+                } else {
+                    console.log(`Recording ${recordingId}: ${status.elapsed_seconds}s / ${status.duration}s`);
+                }
+            } catch (error) {
+                console.error('Recording monitor error:', error);
+                clearInterval(interval);
+                this.recordingIntervals.delete(recordingId);
+            }
+        }, 1000);
+        
+        this.recordingIntervals.set(recordingId, interval);
+    }
+    
+    async getRecordingStatus(recordingId) {
+        const response = await fetch(`${this.apiUrl}/audio/record/status/${recordingId}`);
+        return response.json();
+    }
+    
+    async listRecordings() {
+        const response = await fetch(`${this.apiUrl}/audio/record/list`);
+        return response.json();
+    }
+    
+    async downloadRecording(recordingId, filename = null) {
+        const response = await fetch(`${this.apiUrl}/audio/record/download/${recordingId}`);
+        
+        if (response.ok) {
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename || `recording_${recordingId}.wav`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        }
+        
+        return response.ok;
+    }
+    
+    async deleteRecording(recordingId) {
+        const response = await fetch(`${this.apiUrl}/audio/record/delete/${recordingId}`, {
+            method: 'DELETE'
+        });
+        return response.json();
+    }
+    
+    // SPL measurement
+    async measureSPL(duration = 1.0, device = null) {
+        const params = new URLSearchParams({
+            duration: duration,
+            ...(device && { device: device })
+        });
+        
+        const response = await fetch(`${this.apiUrl}/spl/measure?${params}`);
+        return response.json();
+    }
+    
+    // Status monitoring
+    async getPlaybackStatus() {
+        const response = await fetch(`${this.apiUrl}/audio/noise/status`);
+        return response.json();
+    }
+    
+    // Cleanup
+    cleanup() {
+        if (this.keepAliveInterval) {
+            clearInterval(this.keepAliveInterval);
+        }
+        
+        // Clear all recording monitors
+        this.recordingIntervals.forEach(interval => clearInterval(interval));
+        this.recordingIntervals.clear();
+        
+        // Stop any active playback
+        this.stopNoise();
     }
 }
 
-// Usage
-const audio = new AudioController();
+// Usage examples
+const roomEQ = new RoomEQController();
 
-// Start noise and measure SPL
-audio.startNoise(0.3).then(() => {
-    console.log('Noise started');
+// Set recording completion callback
+roomEQ.onRecordingComplete = (recordingId, status) => {
+    console.log(`Recording ${recordingId} completed: ${status.filename}`);
     
-    // Measure after 1 second
-    setTimeout(() => {
-        audio.measureSPL(2.0).then(result => {
-            console.log(`SPL: ${result.spl_db} dB`);
-        });
-    }, 1000);
-});
+    // Auto-download or process recording
+    roomEQ.downloadRecording(recordingId);
+};
 
-// Stop when page unloads
+// Example: Room response measurement
+async function measureRoomResponse() {
+    try {
+        // Start recording for full measurement
+        const recording = await roomEQ.startRecording(60, 48000);
+        console.log('Recording started:', recording.recording_id);
+        
+        // Wait 2 seconds, then generate test signal
+        setTimeout(async () => {
+            const sweep = await roomEQ.startSineSweeop({
+                startFreq: 20,
+                endFreq: 20000,
+                duration: 10,
+                sweeps: 3,
+                amplitude: 0.4
+            });
+            console.log('Sine sweeps started:', sweep);
+            
+            // Measure ambient after sweeps complete
+            setTimeout(async () => {
+                const spl = await roomEQ.measureSPL(3.0);
+                console.log('Ambient level:', spl.spl_db, 'dB SPL');
+            }, 35000); // After 3 sweeps complete
+            
+        }, 2000);
+        
+    } catch (error) {
+        console.error('Measurement error:', error);
+    }
+}
+
+// Cleanup on page unload
 window.addEventListener('beforeunload', () => {
-    audio.stopNoise();
+    roomEQ.cleanup();
 });
 ```
 
@@ -407,26 +839,83 @@ This ensures that audio stops within 3 seconds of a web browser closing or losin
 ## Starting the Server
 
 ```bash
-# Start server on default port 10315
-cd /path/to/roomeq
-python3 start_server.py
+# Start server using the roomeq-server command (recommended)
+roomeq-server
 
-# Or start manually with uvicorn
-PYTHONPATH=src uvicorn roomeq.roomeq_server:app --host 0.0.0.0 --port 10315
+# Or start manually with Python
+cd /path/to/roomeq
+PYTHONPATH=src python3 -m roomeq.roomeq_server
+
+# Or using the main function directly
+cd /path/to/roomeq
+python3 -c "import sys; sys.path.insert(0, 'src'); from roomeq.roomeq_server import main; main()"
 ```
 
 The server will be available at:
-- API endpoints: `http://localhost:10315`
-- Interactive documentation: `http://localhost:10315/docs`
-- Alternative docs: `http://localhost:10315/redoc`
+- **API endpoints**: `http://localhost:10315`
+- **API documentation**: `http://localhost:10315/` (comprehensive endpoint documentation)
+- **Version information**: `http://localhost:10315/version`
+
+## Technical Implementation
+
+### Framework Details
+- **Framework**: Flask with CORS support for cross-origin requests
+- **Threading**: Multi-threaded request handling for concurrent operations
+- **Audio Backend**: ALSA with arecord subprocess fallback for compatibility
+- **Recording Storage**: Secure temporary directory with automatic cleanup
+- **File Security**: Path validation and access controls for recording management
+
+### Audio Specifications
+- **Recording Format**: 16-bit PCM WAV files
+- **Sample Rates**: 8000, 16000, 22050, 44100, 48000, 96000 Hz
+- **Sweep Type**: Logarithmic frequency progression for acoustic analysis
+- **Noise Type**: White noise with uniform frequency distribution
+- **Calibration**: Automatic microphone sensitivity and gain compensation
+
+### Security Features
+- **File Access**: Recording files restricted to temporary directory
+- **Path Validation**: Directory traversal protection
+- **File Extensions**: Only .wav files allowed for security
+- **Cleanup**: Automatic temp directory creation and management
 
 ## System Integration
 
 This API can be integrated into:
-- Room correction software
-- Acoustic measurement applications  
-- Audio testing frameworks
-- Web-based measurement interfaces
-- Automated test suites
 
-The RESTful design makes it easy to integrate with any programming language or framework that supports HTTP requests.
+### Acoustic Measurement Applications
+- **Room Response Analysis**: Full spectrum sine sweeps with multiple averaging
+- **Speaker Testing**: Focused frequency range measurements
+- **Microphone Calibration**: SPL measurement with known reference signals
+- **Environmental Monitoring**: Continuous background recording and SPL monitoring
+
+### Software Integration
+- **Room Correction Software**: REW (Room EQ Wizard), Acourate, DRC-FIR integration
+- **Audio Testing Frameworks**: Automated test suites with measurement validation
+- **Web-based Interfaces**: Browser-based measurement and control applications
+- **Monitoring Systems**: Long-term acoustic monitoring with scheduled recordings
+- **Research Applications**: Acoustic research with programmatic control and data collection
+
+### Example Integration Workflows
+
+**Room Correction Workflow:**
+1. Start background recording for reference
+2. Generate calibrated sine sweeps with multiple averages
+3. Measure ambient noise levels
+4. Download recording for analysis in room correction software
+5. Repeat measurements with different positions/configurations
+
+**Automated Testing:**
+1. Schedule periodic SPL measurements
+2. Generate test signals at specific times
+3. Record system responses for validation
+4. Download and process recordings automatically
+5. Generate reports with measurement data
+
+**Web Dashboard Integration:**
+- Real-time SPL monitoring display
+- Interactive sweep generation controls
+- Recording management interface
+- Download and playback capabilities
+- Status monitoring for all operations
+
+The RESTful design makes it easy to integrate with any programming language or framework that supports HTTP requests, including Python, JavaScript, MATLAB, LabVIEW, and command-line tools.
