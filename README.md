@@ -157,7 +157,8 @@ roomeq/
 ├── spl_meter.py                 # Command-line SPL measurement
 ├── signal_gen.py                # Command-line signal generator
 ├── acoustic_test.py             # Acoustic testing suite
-├── API_DOCUMENTATION.md         # Complete API documentation
+├── doc/
+│   └── api.md                   # Complete API documentation
 └── src/roomeq/
     ├── analysis.py              # Audio analysis and SPL measurement
     ├── microphone.py            # Microphone detection and calibration
@@ -175,7 +176,7 @@ roomeq/
 
 ## Documentation
 
-- **Complete API docs**: See [API_DOCUMENTATION.md](API_DOCUMENTATION.md)
+- **Complete API docs**: See [doc/api.md](doc/api.md)
 - **Interactive docs**: http://localhost:10315/docs (when server is running)
 - **Alternative docs**: http://localhost:10315/redoc
 
