@@ -71,8 +71,15 @@ def log_request_info():
     logger.info(f"Request: {request.method} {request.url}")
     if request.args:
         logger.debug(f"Query parameters: {dict(request.args)}")
-    if request.json:
-        logger.debug(f"JSON payload: {request.json}")
+    if request.content_type:
+        logger.debug(f"Content-Type: {request.content_type}")
+    if request.headers:
+        logger.debug(f"Headers: {dict(request.headers)}")
+    try:
+        if request.json:
+            logger.debug(f"JSON payload: {request.json}")
+    except Exception as e:
+        logger.debug(f"Error parsing JSON: {e}")
 
 # Add error logging
 @app.errorhandler(404)
@@ -91,6 +98,9 @@ def not_found_error(error):
 def bad_request_error(error):
     """Enhanced 400 error handler with detailed logging."""
     logger.warning(f"400 Bad Request: {request.method} {request.url} - {error.description}")
+    logger.warning(f"Request details - Content-Type: {request.content_type}, Content-Length: {request.content_length}")
+    if request.data:
+        logger.warning(f"Raw request data: {request.data[:200]}...")  # First 200 bytes
     return jsonify({
         "error": "Bad Request", 
         "message": error.description or "The request was invalid",
@@ -98,6 +108,20 @@ def bad_request_error(error):
         "url": request.url,
         "method": request.method
     }), 400
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Enhanced 500 error handler with detailed logging."""
+    logger.error(f"500 Internal Server Error: {request.method} {request.url} - {error}")
+    import traceback
+    logger.error(f"Traceback: {traceback.format_exc()}")
+    return jsonify({
+        "error": "Internal Server Error",
+        "message": "An internal server error occurred",
+        "endpoint": request.endpoint,
+        "url": request.url,
+        "method": request.method
+    }), 500
 
 
 def validate_float_param(param_name: str, value: str, min_val: float = None, max_val: float = None) -> float:
@@ -122,13 +146,34 @@ def get_version():
         "features": [
             "Microphone detection with sensitivity and gain",
             "SPL measurement",
-            "White noise generation with keep-alive control",
-            "Multiple consecutive sine sweeps",
-            "Background audio recording to WAV files",
-            "FFT spectral analysis with normalization",
-            "Frequency band analysis and peak detection",
-            "Real-time playback and recording management"
-        ]
+            "FFT analysis with windowing and normalization",
+            "Audio recording with automatic cleanup",
+            "Sine sweep generation",
+            "White/pink noise generation"
+        ],
+        "server_info": {
+            "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+            "flask_version": "2.x",
+            "threading": "Multi-threaded request handling",
+            "audio_backend": "ALSA with arecord fallback for compatibility"
+        }
+    })
+
+
+@app.route("/debug/routes", methods=["GET"])
+def debug_routes():
+    """Debug endpoint to show all available routes."""
+    routes = []
+    for rule in app.url_map.iter_rules():
+        routes.append({
+            "endpoint": rule.endpoint,
+            "methods": list(rule.methods - {"HEAD", "OPTIONS"}),
+            "path": rule.rule
+        })
+    
+    return jsonify({
+        "available_routes": sorted(routes, key=lambda x: x["path"]),
+        "total_routes": len(routes)
     })
 
 
