@@ -82,46 +82,76 @@ class SignalGenerator:
         
         return samples
     
-    def _generate_sine_sweep(self, start_freq: float, end_freq: float, 
-                           duration_samples: int, amplitude: float = 0.5) -> np.ndarray:
+    def _generate_sine_sweep(self, f_start, f_end, duration_samples, amplitude):
         """
-        Generate sine sweep (chirp) samples.
+        Generate a logarithmic sine sweep with proper amplitude normalization.
+        
+        Based on the enDAQ sine sweep testing documentation:
+        https://endaq.com/pages/sine-sweep-testing
+        
+        For logarithmic sweeps, the frequency follows:
+        f(t) = f_start * (f_end/f_start)^(t/T)
+        
+        For constant amplitude in frequency domain (flat frequency response),
+        the time-domain amplitude must be adjusted by 1/sqrt(f) to compensate
+        for the logarithmic frequency distribution.
         
         Args:
-            start_freq: Starting frequency in Hz
-            end_freq: Ending frequency in Hz
-            duration_samples: Number of samples to generate
-            amplitude: Amplitude scaling (0.0 to 1.0)
+            f_start: Starting frequency in Hz
+            f_end: Ending frequency in Hz  
+            duration_samples: Duration in samples
+            amplitude: Peak amplitude (0.0 to 1.0)
             
         Returns:
-            Sweep samples as numpy array
+            numpy.ndarray: Generated sine sweep samples
         """
-        t = np.linspace(0, duration_samples / self.sample_rate, duration_samples, False)
+        duration_seconds = duration_samples / self.sample_rate
+        t = np.linspace(0, duration_seconds, duration_samples, endpoint=False)
         
-        # Generate logarithmic sweep with proper formula for constant power
-        # The correct logarithmic chirp formula maintains constant power across frequencies
-        # f(t) = f0 * (f1/f0)^(t/T)
-        # φ(t) = 2π * f0 * T/ln(f1/f0) * ((f1/f0)^(t/T) - 1)
+        # Calculate frequency ratio
+        frequency_ratio = f_end / f_start
         
-        duration_sec = duration_samples / self.sample_rate
-        frequency_ratio = end_freq / start_freq
+        # Logarithmic frequency sweep formula from enDAQ documentation
+        # f(t) = f_start * (f_end/f_start)^(t/T)
+        instantaneous_freq = f_start * np.power(frequency_ratio, t / duration_seconds)
+        
+        # Calculate phase by integrating frequency
+        # φ(t) = 2π * ∫ f(τ) dτ from 0 to t
+        # For logarithmic sweep: φ(t) = 2π * f_start * T / ln(f_end/f_start) * [(f_end/f_start)^(t/T) - 1]
         log_ratio = np.log(frequency_ratio)
+        if abs(log_ratio) > 1e-10:  # Avoid division by zero
+            phase = 2 * np.pi * f_start * duration_seconds / log_ratio * (
+                np.power(frequency_ratio, t / duration_seconds) - 1
+            )
+        else:
+            # Linear case when f_start ≈ f_end
+            phase = 2 * np.pi * f_start * t
         
-        # Calculate instantaneous phase for logarithmic sweep
-        phase = 2 * np.pi * start_freq * duration_sec / log_ratio * (frequency_ratio ** (t / duration_sec) - 1)
+        # Generate basic sine sweep
+        signal = np.sin(phase)
         
-        # Generate the sweep with constant amplitude
-        sweep = np.sin(phase) * amplitude
+        # Apply amplitude normalization for flat frequency response
+        # The amplitude must decrease with increasing frequency to compensate
+        # for the logarithmic time distribution
+        # Use 1/sqrt(f) compensation as recommended for spectral flatness
+        amplitude_compensation = np.sqrt(f_start / instantaneous_freq)
         
-        # Convert to stereo if needed
-        if self.channels == 2:
-            sweep = np.column_stack((sweep, sweep))
+        # Apply amplitude and compensation
+        signal = signal * amplitude * amplitude_compensation
         
-        # Convert to S16_LE format
-        samples = (sweep * 32767).astype(np.int16)
+        # Apply fade-in and fade-out to reduce spectral artifacts
+        fade_samples = int(0.01 * self.sample_rate)  # 10ms fade
+        if fade_samples > 0:
+            # Fade in
+            fade_in = np.linspace(0, 1, fade_samples)
+            signal[:fade_samples] *= fade_in
+            
+            # Fade out  
+            fade_out = np.linspace(1, 0, fade_samples)
+            signal[-fade_samples:] *= fade_out
         
-        return samples
-    
+        return signal
+
     def _playback_worker(self, samples: np.ndarray, loop: bool = False, continuous_noise: bool = False, amplitude: float = 0.5):
         """
         Worker function for audio playback in a separate thread.

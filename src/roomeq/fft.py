@@ -148,12 +148,11 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
         # Normalize by window power sum for proper amplitude scaling
         magnitude = magnitude / np.sqrt(window_power_sum)
         
-        # Convert to Power Spectral Density (PSD) - power per Hz
-        # Use ENBW for proper window correction in spectral density
-        psd = (magnitude**2) / enbw
-        
-        # Convert to dB relative to full scale squared per Hz
-        magnitude_db = 10 * np.log10(psd + 1e-20)  # Using 10*log10 for power density
+        # For frequency response analysis, convert magnitude to dB
+        # Use 20*log10 for magnitude (not power) to get proper frequency response
+        with np.errstate(divide='ignore', invalid='ignore'):
+            magnitude_db = 20 * np.log10(magnitude + 1e-20)
+            magnitude_db[~np.isfinite(magnitude_db)] = -np.inf
         
         # Compute phase spectrum
         phase = np.angle(fft_result)
@@ -259,9 +258,9 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
             'frequency_bands': frequency_bands,
             'normalization': normalization_info,
             'spectral_density': {
-                'type': 'Power Spectral Density (PSD)',
-                'units': 'dB re FS²/Hz',
-                'description': 'Power spectral density with proper window correction and normalization',
+                'type': 'Magnitude Spectrum',
+                'units': 'dB re FS',
+                'description': 'Magnitude spectrum with proper window correction for frequency response analysis',
                 'enbw_hz': float(enbw),
                 'window_correction_applied': True
             }
@@ -386,7 +385,7 @@ def summarize_fft_log_frequency(frequencies: np.ndarray, magnitudes: np.ndarray,
                                points_per_octave: int = 16, 
                                f_min: float = 20.0, f_max: float = 20000.0) -> Dict:
     """
-    Summarize FFT data into logarithmically spaced frequency buckets.
+    Summarize FFT data into logarithmically spaced frequency buckets using C reference algorithm.
     
     Args:
         frequencies: Frequency array from FFT
@@ -416,65 +415,70 @@ def summarize_fft_log_frequency(frequencies: np.ndarray, magnitudes: np.ndarray,
         if f_min >= f_max:
             raise ValueError("No frequency data available in the specified range")
         
-        # Calculate logarithmically spaced frequency bins
+        # Calculate number of octaves and output points
         n_octaves = np.log2(f_max / f_min)
-        n_points = int(n_octaves * points_per_octave) + 1
+        # Use the C algorithm approach: fixed number of points across the range
+        n_points = int(n_octaves * points_per_octave)
         
-        # Create logarithmically spaced frequency points
-        log_frequencies = np.logspace(np.log10(f_min), np.log10(f_max), n_points)
+        # Calculate the frequency spacing factor (from C code)
+        x = pow(f_max / f_min, 1.0 / n_points)
         
-        # Create frequency bin edges (geometric mean between adjacent points)
-        bin_edges = np.zeros(len(log_frequencies) + 1)
-        bin_edges[0] = f_min / np.sqrt(log_frequencies[1] / log_frequencies[0])
-        bin_edges[-1] = f_max * np.sqrt(log_frequencies[-1] / log_frequencies[-2])
-        
-        for i in range(1, len(log_frequencies)):
-            bin_edges[i] = np.sqrt(log_frequencies[i-1] * log_frequencies[i])
+        # Calculate frequency resolution (video bandwidth)
+        freq_resolution = frequencies[1] - frequencies[0]
         
         # Initialize output arrays
         summarized_frequencies = []
         summarized_magnitudes = []
         bin_info = []
         
-        # Process each frequency bin
-        for i in range(len(log_frequencies)):
-            f_low = bin_edges[i]
-            f_high = bin_edges[i + 1]
-            f_center = log_frequencies[i]
+        # Process each logarithmic bin using C algorithm
+        for i in range(n_points):
+            # Calculate bin boundaries (from C code)
+            fr_start = f_min * pow(x, i)
+            fr_end = f_min * pow(x, i + 1)
             
-            # Find FFT bins within this logarithmic bin
-            mask = (frequencies >= f_low) & (frequencies < f_high)
-            bin_indices = np.where(mask)[0]
+            # Find FFT bins within this range (from C code logic)
+            start_bin_idx = int(fr_start / freq_resolution + 0.5)
             
-            if len(bin_indices) > 0:
-                # Calculate mean magnitude in dB (since magnitudes are already in log space)
-                bin_magnitudes = magnitudes[bin_indices]
-                mean_magnitude = np.mean(bin_magnitudes)
-                
-                summarized_frequencies.append(float(f_center))
-                summarized_magnitudes.append(float(mean_magnitude))
-                
-                bin_info.append({
-                    "center_freq": float(f_center),
-                    "freq_range": [float(f_low), float(f_high)],
-                    "n_samples": len(bin_indices),
-                    "mean_magnitude": float(mean_magnitude),
-                    "min_magnitude": float(np.min(bin_magnitudes)),
-                    "max_magnitude": float(np.max(bin_magnitudes))
-                })
+            # Accumulate magnitudes from FFT bins in this range
+            sum_magnitude_linear = 0.0
+            count = 0
+            bin_idx = start_bin_idx
+            
+            # Process all FFT bins that fall within this logarithmic bin range
+            while bin_idx < len(frequencies) and frequencies[bin_idx] < fr_end:
+                if bin_idx < len(magnitudes):
+                    # Convert from dB to linear for proper averaging
+                    linear_magnitude = 10**(magnitudes[bin_idx] / 20.0)
+                    sum_magnitude_linear += linear_magnitude
+                    count += 1
+                bin_idx += 1
+            
+            if count > 0:
+                # Average in linear space, then convert back to dB (proper way)
+                avg_linear = sum_magnitude_linear / count
+                avg_magnitude_db = 20 * np.log10(avg_linear + 1e-20)
             else:
-                # No data in this bin, interpolate from neighboring bins
-                summarized_frequencies.append(float(f_center))
-                summarized_magnitudes.append(-100.0)  # Very low value for empty bins
-                
-                bin_info.append({
-                    "center_freq": float(f_center),
-                    "freq_range": [float(f_low), float(f_high)],
-                    "n_samples": 0,
-                    "mean_magnitude": -100.0,
-                    "min_magnitude": -100.0,
-                    "max_magnitude": -100.0
-                })
+                # No data in this bin
+                avg_magnitude_db = -100.0
+            
+            # Calculate logarithmic average frequency (from C code)
+            if fr_end != fr_start and fr_end > 0 and fr_start > 0:
+                log_avg_freq = (fr_end - fr_start) / np.log(fr_end / fr_start)
+            else:
+                log_avg_freq = (fr_start + fr_end) / 2.0
+            
+            summarized_frequencies.append(float(log_avg_freq))
+            summarized_magnitudes.append(float(avg_magnitude_db))
+            
+            bin_info.append({
+                "center_freq": float(log_avg_freq),
+                "freq_range": [float(fr_start), float(fr_end)],
+                "n_samples": count,
+                "mean_magnitude": float(avg_magnitude_db),
+                "min_magnitude": float(avg_magnitude_db),  # Not calculated in C version
+                "max_magnitude": float(avg_magnitude_db)   # Not calculated in C version
+            })
         
         return {
             "frequencies": summarized_frequencies,
@@ -483,7 +487,8 @@ def summarize_fft_log_frequency(frequencies: np.ndarray, magnitudes: np.ndarray,
             "frequency_range": [float(f_min), float(f_max)],
             "n_octaves": float(n_octaves),
             "n_points": len(summarized_frequencies),
-            "bin_details": bin_info
+            "bin_details": bin_info,
+            "algorithm": "C_reference_implementation"
         }
         
     except Exception as e:
