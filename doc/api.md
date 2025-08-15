@@ -520,6 +520,34 @@ When the `points_per_octave` parameter is specified, the FFT analysis includes a
 - `points_per_octave=16`: 161 points (higher resolution, good for detailed analysis)
 - `points_per_octave=24`: 241 points (very high resolution for research applications)
 
+#### Psychoacoustic Smoothing
+
+The FFT analysis supports optional psychoacoustic smoothing that applies frequency-dependent bandwidth filtering to match human auditory perception. This smoothing uses critical bands based on the Bark scale:
+
+**Key Features:**
+- **Variable Bandwidth**: Narrow smoothing at low frequencies (25-100 Hz bandwidth), progressively wider at high frequencies (up to 1000+ Hz bandwidth)
+- **Perceptual Accuracy**: Follows critical bands of human hearing for more natural frequency response presentation
+- **Noise Reduction**: Reduces measurement noise while preserving important spectral features
+- **Visual Enhancement**: Creates cleaner, more readable frequency response plots
+
+**Smoothing Factor Values:**
+- `0.5`: Light smoothing, preserves most detail
+- `1.0`: Standard psychoacoustic smoothing (recommended)
+- `1.5`: Moderate smoothing, good for noisy measurements
+- `2.0`: Heavy smoothing, removes fine detail but shows overall trends
+- `3.0+`: Very heavy smoothing for extremely noisy data
+
+**When to Use:**
+- **Room measurements**: Smooths room resonances and reflections for clearer overall response
+- **Speaker testing**: Reduces driver breakup and baffle effects while showing overall response shape
+- **Noisy environments**: Improves signal-to-noise ratio in measurements with background noise
+- **Publication plots**: Creates cleaner graphs for reports and presentations
+
+**Technical Implementation:**
+- Uses Gaussian-weighted averaging within frequency-dependent critical bands
+- Preserves energy conservation by operating in linear power domain
+- Applies Bark scale bandwidth approximation for computational efficiency
+
 **Log Frequency Summary Fields:**
 - `frequencies`: Center frequencies of logarithmic bins
 - `magnitudes`: Mean magnitude in dB for each frequency bin
