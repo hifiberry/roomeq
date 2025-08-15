@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from typing import List, Dict, Any, Optional
 import logging
 import threading
@@ -40,6 +41,22 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
+
+# Add middleware for better reverse proxy support
+@app.middleware("http")
+async def add_proxy_headers(request: Request, call_next):
+    """Middleware to handle reverse proxy headers and prevent upgrade warnings."""
+    response = await call_next(request)
+    
+    # Add headers to indicate we don't support WebSocket upgrades
+    response.headers["connection"] = "close"
+    
+    # Add CORS headers if needed for web frontends
+    response.headers["access-control-allow-origin"] = "*"
+    response.headers["access-control-allow-methods"] = "GET, POST, OPTIONS"
+    response.headers["access-control-allow-headers"] = "content-type"
+    
+    return response
 
 @app.get("/version")
 def get_version():
@@ -375,7 +392,17 @@ def root():
 def main():
     """Main entry point for the roomeq-server console script."""
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=10315)
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=10315,
+        # Disable upgrade to avoid warnings with nginx reverse proxy
+        upgrade_timeout=0,
+        # Add headers for better proxy compatibility
+        headers=[("server", "roomeq-api/0.2.0")],
+        # Disable websockets since we don't use them
+        ws="none"
+    )
 
 
 if __name__ == "__main__":
