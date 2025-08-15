@@ -75,7 +75,7 @@ def load_wav_file(filepath: str) -> Tuple[np.ndarray, int, Dict]:
 
 
 def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'hann', 
-                fft_size: int = None) -> Dict:
+                fft_size: int = None, normalize: float = None) -> Dict:
     """
     Compute comprehensive FFT analysis of audio data.
     
@@ -84,9 +84,10 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
         sample_rate: Sample rate in Hz
         window_type: Window function ('hann', 'hamming', 'blackman', 'none')
         fft_size: FFT size (power of 2), auto-calculated if None
+        normalize: Frequency in Hz to normalize to 0 dB, None for no normalization
         
     Returns:
-        Dict containing comprehensive FFT analysis results
+        Dict containing comprehensive FFT analysis results with levels in dB
         
     Raises:
         RuntimeError: If FFT computation fails
@@ -132,6 +133,26 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
         
         # Create frequency axis
         frequencies = np.fft.rfftfreq(fft_size, 1/sample_rate)
+        
+        # Apply normalization if requested
+        normalization_info = {}
+        if normalize is not None:
+            # Find the frequency bin closest to the normalization frequency
+            normalize_idx = np.argmin(np.abs(frequencies - normalize))
+            normalize_freq_actual = frequencies[normalize_idx]
+            normalize_level_db = magnitude_db[normalize_idx]
+            
+            # Normalize: subtract the reference level from all values
+            magnitude_db = magnitude_db - normalize_level_db
+            
+            normalization_info = {
+                "requested_freq": float(normalize),
+                "actual_freq": float(normalize_freq_actual),
+                "reference_level_db": float(normalize_level_db),
+                "applied": True
+            }
+        else:
+            normalization_info = {"applied": False}
         
         # Find peaks
         peak_indices = []
@@ -207,7 +228,8 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
             'peak_frequency': peak_frequency,
             'peak_magnitude': peak_magnitude,
             'spectral_centroid': float(spectral_centroid),
-            'frequency_bands': frequency_bands
+            'frequency_bands': frequency_bands,
+            'normalization': normalization_info
         }
         
     except Exception as e:
@@ -215,7 +237,7 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
 
 
 def analyze_wav_file(filepath: str, window_type: str = 'hann', fft_size: int = None,
-                     start_time: float = 0.0, duration: float = None) -> Dict:
+                     start_time: float = 0.0, duration: float = None, normalize: float = None) -> Dict:
     """
     Complete FFT analysis of a WAV file with time windowing support.
     
@@ -225,6 +247,7 @@ def analyze_wav_file(filepath: str, window_type: str = 'hann', fft_size: int = N
         fft_size: FFT size (power of 2), auto-calculated if None
         start_time: Start analysis at this time in seconds
         duration: Duration to analyze in seconds, None for entire file
+        normalize: Frequency in Hz to normalize to 0 dB, None for no normalization
         
     Returns:
         Dict containing file info and FFT analysis
@@ -250,7 +273,7 @@ def analyze_wav_file(filepath: str, window_type: str = 'hann', fft_size: int = N
             audio_data = audio_data[start_sample:]
     
     # Perform FFT analysis
-    fft_result = compute_fft(audio_data, sample_rate, window_type, fft_size)
+    fft_result = compute_fft(audio_data, sample_rate, window_type, fft_size, normalize)
     
     return {
         'file_info': {

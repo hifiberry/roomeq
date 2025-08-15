@@ -315,6 +315,7 @@ def analyze_fft():
     fft_size_str = request.args.get("fft_size")
     start_time_str = request.args.get("start_time", "0")
     duration_str = request.args.get("duration")
+    normalize_str = request.args.get("normalize")
     
     # Validate parameters
     if not filename and not filepath:
@@ -357,12 +358,16 @@ def analyze_fft():
         except ValueError:
             abort(400, "Invalid fft_size: must be an integer")
     
+    normalize = None
+    if normalize_str:
+        normalize = validate_float_param("normalize", normalize_str, 0.1, 50000.0)
+    
     try:
         # Validate parameters using FFT module
         validate_fft_parameters(fft_size, window_type)
         
         # Use FFT module for analysis
-        result = analyze_wav_file(target_file, window_type, fft_size, start_time, duration)
+        result = analyze_wav_file(target_file, window_type, fft_size, start_time, duration, normalize)
         
         # Prepare response
         response = {
@@ -402,38 +407,43 @@ def analyze_fft_recording(recording_id: str):
     if not os.path.exists(recording["filepath"]):
         abort(404, "Recording file no longer available")
     
-    # Get analysis parameters
-    window_type = request.args.get("window", "hann")
-    fft_size_str = request.args.get("fft_size")
-    start_time_str = request.args.get("start_time", "0")
-    duration_str = request.args.get("duration")
-    
-    # Validate parameters
-    start_time = 0.0
-    if start_time_str:
-        start_time = validate_float_param("start_time", start_time_str, 0.0)
-    
-    duration = None
-    if duration_str:
-        duration = validate_float_param("duration", duration_str, 0.1, 300.0)
-    
-    fft_size = None
-    if fft_size_str:
-        try:
-            fft_size = int(fft_size_str)
-            if fft_size < 64 or fft_size > 65536:
-                abort(400, "fft_size must be between 64 and 65536")
-            if fft_size & (fft_size - 1) != 0:
-                abort(400, "fft_size must be a power of 2")
-        except ValueError:
-            abort(400, "Invalid fft_size: must be an integer")
-    
     try:
+        # Get analysis parameters
+        window_type = request.args.get("window", "hann")
+        fft_size_str = request.args.get("fft_size")
+        start_time_str = request.args.get("start_time", "0")
+        duration_str = request.args.get("duration")
+        normalize_str = request.args.get("normalize")
+        
+        # Validate parameters
+        start_time = 0.0
+        if start_time_str:
+            start_time = validate_float_param("start_time", start_time_str, 0.0)
+        
+        duration = None
+        if duration_str:
+            duration = validate_float_param("duration", duration_str, 0.1, 300.0)
+        
+        fft_size = None
+        if fft_size_str:
+            try:
+                fft_size = int(fft_size_str)
+                if fft_size < 64 or fft_size > 65536:
+                    abort(400, "fft_size must be between 64 and 65536")
+                if fft_size & (fft_size - 1) != 0:
+                    abort(400, "fft_size must be a power of 2")
+            except ValueError:
+                abort(400, "Invalid fft_size: must be an integer")
+        
+        normalize = None
+        if normalize_str:
+            normalize = validate_float_param("normalize", normalize_str, 0.1, 50000.0)
+        
         # Validate parameters using FFT module
         validate_fft_parameters(fft_size, window_type)
         
         # Use FFT module for analysis
-        result = analyze_wav_file(recording["filepath"], window_type, fft_size, start_time, duration)
+        result = analyze_wav_file(recording["filepath"], window_type, fft_size, start_time, duration, normalize)
         
         # Prepare response with recording context
         response = {

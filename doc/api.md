@@ -347,6 +347,7 @@ Perform FFT (Fast Fourier Transform) spectral analysis on a WAV file.
 - `fft_size` (integer, optional): FFT size, must be power of 2 between 64-65536 (auto-calculated if not specified)
 - `start_time` (float, optional): Start analysis at this time in seconds (default: 0)
 - `duration` (float, optional): Duration to analyze in seconds (default: entire file from start_time)
+- `normalize` (float, optional): Frequency in Hz to normalize to 0 dB (all other levels adjusted relative to this frequency)
 
 **Note:** Must specify either `filename` OR `filepath`, not both.
 
@@ -386,6 +387,12 @@ Perform FFT (Fast Fourier Transform) spectral analysis on a WAV file.
             "upper_midrange": {"range": "2000-4000 Hz", "avg_magnitude": -30.2, "peak_frequency": 2500.0},
             "presence": {"range": "4000-6000 Hz", "avg_magnitude": -40.5, "peak_frequency": 5000.0},
             "brilliance": {"range": "6000-20000 Hz", "avg_magnitude": -50.8, "peak_frequency": 8000.0}
+        },
+        "normalization": {
+            "applied": true,
+            "requested_freq": 1000.0,
+            "actual_freq": 1000.0,
+            "reference_level_db": -20.5
         }
     },
     "timestamp": "2024-01-01T12:00:00"
@@ -403,6 +410,7 @@ Perform FFT analysis on a specific recording by ID.
 - `fft_size` (integer, optional): FFT size, must be power of 2
 - `start_time` (float, optional): Start analysis time in seconds
 - `duration` (float, optional): Duration to analyze in seconds
+- `normalize` (float, optional): Frequency in Hz to normalize to 0 dB
 
 **Success Response (200):**
 ```json
