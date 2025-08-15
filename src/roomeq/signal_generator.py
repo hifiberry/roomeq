@@ -111,13 +111,15 @@ class SignalGenerator:
         
         return samples
     
-    def _playback_worker(self, samples: np.ndarray, loop: bool = False):
+    def _playback_worker(self, samples: np.ndarray, loop: bool = False, continuous_noise: bool = False, amplitude: float = 0.5):
         """
         Worker function for audio playback in a separate thread.
         
         Args:
             samples: Audio samples to play
             loop: Whether to loop the audio
+            continuous_noise: Whether to generate continuous new noise samples
+            amplitude: Amplitude for continuous noise generation
         """
         try:
             self._open_playback()
@@ -125,29 +127,38 @@ class SignalGenerator:
             # Calculate chunk size for smooth playback
             chunk_size = 1024 * self.channels
             
-            while not self.stop_playback:
-                for i in range(0, len(samples), chunk_size):
-                    if self.stop_playback:
+            if continuous_noise:
+                # For continuous noise, generate new samples continuously
+                while not self.stop_playback:
+                    # Generate a small chunk of new noise samples
+                    noise_chunk = self._generate_noise(chunk_size // self.channels if self.channels == 2 else chunk_size, amplitude)
+                    data = noise_chunk.tobytes()
+                    self.pcm.write(data)
+            else:
+                # Original behavior for non-noise signals
+                while not self.stop_playback:
+                    for i in range(0, len(samples), chunk_size):
+                        if self.stop_playback:
+                            break
+                            
+                        chunk = samples[i:i + chunk_size]
+                        
+                        # Pad last chunk if needed
+                        if len(chunk) < chunk_size:
+                            if self.channels == 2:
+                                padding_shape = (chunk_size - len(chunk), 2)
+                            else:
+                                padding_shape = (chunk_size - len(chunk),)
+                            padding = np.zeros(padding_shape, dtype=np.int16)
+                            chunk = np.vstack((chunk, padding)) if self.channels == 2 else np.concatenate((chunk, padding))
+                        
+                        # Convert to bytes and write
+                        data = chunk.tobytes()
+                        self.pcm.write(data)
+                    
+                    if not loop:
                         break
                         
-                    chunk = samples[i:i + chunk_size]
-                    
-                    # Pad last chunk if needed
-                    if len(chunk) < chunk_size:
-                        if self.channels == 2:
-                            padding_shape = (chunk_size - len(chunk), 2)
-                        else:
-                            padding_shape = (chunk_size - len(chunk),)
-                        padding = np.zeros(padding_shape, dtype=np.int16)
-                        chunk = np.vstack((chunk, padding)) if self.channels == 2 else np.concatenate((chunk, padding))
-                    
-                    # Convert to bytes and write
-                    data = chunk.tobytes()
-                    self.pcm.write(data)
-                
-                if not loop:
-                    break
-                    
         except Exception as e:
             logger.error(f"Playback error: {e}")
         finally:
@@ -170,27 +181,33 @@ class SignalGenerator:
         
         try:
             if duration == 0:
-                # Infinite playback - generate 1 second chunks and loop
-                duration_samples = self.sample_rate
-                loop = True
+                # Infinite playback - use continuous noise generation
                 print(f"Playing white noise indefinitely at {amplitude:.1%} amplitude...")
                 print("Press Ctrl+C to stop.")
+                
+                # Start playback with continuous noise generation
+                self.stop_playback = False
+                self.playback_thread = threading.Thread(
+                    target=self._playback_worker, 
+                    args=(np.array([]), False, True, amplitude),  # empty samples, no loop, continuous noise, amplitude
+                    daemon=True
+                )
+                self.playback_thread.start()
             else:
                 duration_samples = int(duration * self.sample_rate)
-                loop = False
                 print(f"Playing white noise for {duration} seconds at {amplitude:.1%} amplitude...")
-            
-            # Generate noise samples
-            samples = self._generate_noise(duration_samples, amplitude)
-            
-            # Start playback in separate thread
-            self.stop_playback = False
-            self.playback_thread = threading.Thread(
-                target=self._playback_worker, 
-                args=(samples, loop), 
-                daemon=True
-            )
-            self.playback_thread.start()
+                
+                # Generate noise samples for fixed duration
+                samples = self._generate_noise(duration_samples, amplitude)
+                
+                # Start playback in separate thread
+                self.stop_playback = False
+                self.playback_thread = threading.Thread(
+                    target=self._playback_worker, 
+                    args=(samples, False, False, amplitude),  # samples, no loop, no continuous noise
+                    daemon=True
+                )
+                self.playback_thread.start()
             
             return True
             
