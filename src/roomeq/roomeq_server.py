@@ -9,8 +9,13 @@ import tempfile
 import os
 import subprocess
 import uuid
+import numpy as np
+import wave
 from datetime import datetime, timedelta
 from pathlib import Path
+
+# Local imports
+from roomeq.fft import load_wav_file, compute_fft, analyze_wav_file, validate_fft_parameters
 
 from .microphone import MicrophoneDetector, detect_microphones
 from .analysis import measure_spl
@@ -298,6 +303,173 @@ def _monitor_playback():
             _playback_state['active'] = False
             _playback_state['stop_time'] = None
             break
+
+
+@app.route("/audio/analyze/fft", methods=["POST"])
+def analyze_fft():
+    """Perform FFT analysis on a WAV file."""
+    # Get parameters
+    filename = request.args.get("filename")
+    filepath = request.args.get("filepath")
+    window_type = request.args.get("window", "hann")
+    fft_size_str = request.args.get("fft_size")
+    start_time_str = request.args.get("start_time", "0")
+    duration_str = request.args.get("duration")
+    
+    # Validate parameters
+    if not filename and not filepath:
+        abort(400, "Either 'filename' or 'filepath' parameter is required")
+    
+    if filename and filepath:
+        abort(400, "Specify either 'filename' or 'filepath', not both")
+    
+    # Determine file path
+    if filename:
+        # Security validation for recorded files
+        validated_path = _validate_recording_file(filename)
+        target_file = validated_path
+    else:
+        # External file path - basic security checks
+        if not filepath.endswith('.wav'):
+            abort(400, "Only WAV files are supported")
+        if not os.path.exists(filepath):
+            abort(404, "File not found")
+        target_file = filepath
+    
+    # Validate optional parameters
+    start_time = 0.0
+    if start_time_str:
+        start_time = validate_float_param("start_time", start_time_str, 0.0)
+    
+    duration = None
+    if duration_str:
+        duration = validate_float_param("duration", duration_str, 0.1, 300.0)
+    
+    fft_size = None
+    if fft_size_str:
+        try:
+            fft_size = int(fft_size_str)
+            if fft_size < 64 or fft_size > 65536:
+                abort(400, "fft_size must be between 64 and 65536")
+            # Ensure it's a power of 2
+            if fft_size & (fft_size - 1) != 0:
+                abort(400, "fft_size must be a power of 2")
+        except ValueError:
+            abort(400, "Invalid fft_size: must be an integer")
+    
+    try:
+        # Validate parameters using FFT module
+        validate_fft_parameters(fft_size, window_type)
+        
+        # Use FFT module for analysis
+        result = analyze_wav_file(target_file, window_type, fft_size, start_time, duration)
+        
+        # Prepare response
+        response = {
+            "status": "success",
+            "file_info": result["file_info"],
+            "fft_analysis": result["fft_analysis"],
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        logger.info(f"FFT analysis completed for {os.path.basename(target_file)}: "
+                   f"{result['file_info']['analyzed_samples']} samples, "
+                   f"{result['fft_analysis']['fft_size']} FFT size")
+        
+        return jsonify(response)
+        
+    except ValueError as e:
+        logger.error(f"FFT analysis parameter error: {e}")
+        abort(400, str(e))
+    except RuntimeError as e:
+        logger.error(f"FFT analysis runtime error: {e}")
+        abort(500, str(e))
+    except Exception as e:
+        logger.error(f"FFT analysis error: {e}")
+        abort(500, f"FFT analysis failed: {str(e)}")
+
+
+@app.route("/audio/analyze/fft-recording/<recording_id>", methods=["POST"])
+def analyze_fft_recording(recording_id: str):
+    """Perform FFT analysis on a recorded file by recording ID."""
+    global _completed_recordings
+    
+    if recording_id not in _completed_recordings:
+        abort(404, f"Recording {recording_id} not found")
+    
+    recording = _completed_recordings[recording_id]
+    
+    if not os.path.exists(recording["filepath"]):
+        abort(404, "Recording file no longer available")
+    
+    # Get analysis parameters
+    window_type = request.args.get("window", "hann")
+    fft_size_str = request.args.get("fft_size")
+    start_time_str = request.args.get("start_time", "0")
+    duration_str = request.args.get("duration")
+    
+    # Validate parameters
+    start_time = 0.0
+    if start_time_str:
+        start_time = validate_float_param("start_time", start_time_str, 0.0)
+    
+    duration = None
+    if duration_str:
+        duration = validate_float_param("duration", duration_str, 0.1, 300.0)
+    
+    fft_size = None
+    if fft_size_str:
+        try:
+            fft_size = int(fft_size_str)
+            if fft_size < 64 or fft_size > 65536:
+                abort(400, "fft_size must be between 64 and 65536")
+            if fft_size & (fft_size - 1) != 0:
+                abort(400, "fft_size must be a power of 2")
+        except ValueError:
+            abort(400, "Invalid fft_size: must be an integer")
+    
+    try:
+        # Validate parameters using FFT module
+        validate_fft_parameters(fft_size, window_type)
+        
+        # Use FFT module for analysis
+        result = analyze_wav_file(recording["filepath"], window_type, fft_size, start_time, duration)
+        
+        # Prepare response with recording context
+        response = {
+            "status": "success",
+            "recording_info": {
+                "recording_id": recording_id,
+                "filename": recording["filename"],
+                "original_duration": recording["duration"],
+                "original_device": recording["device"],
+                "original_sample_rate": recording["sample_rate"],
+                "timestamp": recording["timestamp"].isoformat()
+            },
+            "analysis_info": {
+                "analyzed_duration": result["file_info"]["analyzed_duration"],
+                "analyzed_samples": result["file_info"]["analyzed_samples"],
+                "start_time": start_time
+            },
+            "fft_analysis": result["fft_analysis"],
+            "analysis_timestamp": datetime.now().isoformat()
+        }
+        
+        logger.info(f"FFT analysis completed for recording {recording_id}: "
+                   f"{result['file_info']['analyzed_samples']} samples, "
+                   f"{result['fft_analysis']['fft_size']} FFT size")
+        
+        return jsonify(response)
+        
+    except ValueError as e:
+        logger.error(f"FFT analysis parameter error for recording {recording_id}: {e}")
+        abort(400, str(e))
+    except RuntimeError as e:
+        logger.error(f"FFT analysis runtime error for recording {recording_id}: {e}")
+        abort(500, str(e))
+    except Exception as e:
+        logger.error(f"FFT analysis error for recording {recording_id}: {e}")
+        abort(500, f"FFT analysis failed: {str(e)}")
 
 
 @app.route("/audio/record/start", methods=["POST"])

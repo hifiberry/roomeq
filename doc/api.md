@@ -16,6 +16,7 @@ The RoomEQ Audio Processing API provides a comprehensive REST interface for micr
 - **Signal Generation**: White noise and logarithmic sine sweep generation with keep-alive functionality
 - **Multiple Sweep Support**: Generate consecutive sine sweeps for acoustic averaging
 - **Audio Recording**: Background recording to WAV files with secure file management
+- **FFT Analysis**: Comprehensive spectral analysis of WAV files with windowing functions, peak detection, and frequency band analysis
 - **Real-time Control**: Start, stop, extend, and monitor audio operations through REST endpoints
 - **Cross-Origin Support**: CORS enabled for web application integration
 
@@ -44,10 +45,14 @@ Get API information and endpoint overview.
     "measurements": {"/spl/measure": "SPL measurement"},
     "signal_generation": {
       "/audio/noise/start": "White noise playback",
-      "/audio/noise/keep-playing": "Extend playback", 
+      "/audio/noise/keep-playing": "Extend playbook", 
       "/audio/noise/stop": "Stop playback",
-      "/audio/noise/status": "Playback status",
+      "/audio/noise/status": "Playbook status",
       "/audio/sweep/start": "Sine sweep generation"
+    },
+    "fft_analysis": {
+      "/audio/analyze/fft": "FFT analysis of WAV files",
+      "/audio/analyze/fft-recording/<id>": "FFT analysis of recordings"
     },
     "recording": {
       "/audio/record/start": "Start recording",
@@ -329,6 +334,122 @@ POST /audio/sweep/start?start_freq=100&end_freq=8000&duration=5&sweeps=3&amplitu
 - **Speaker Testing**: Focused frequency ranges
 - **Acoustic Averaging**: Multiple sweeps for noise reduction
 - **Automated Measurements**: Scripted measurement sequences
+
+## FFT Analysis
+
+### `/audio/analyze/fft` [POST]
+Perform FFT (Fast Fourier Transform) spectral analysis on a WAV file.
+
+**Parameters:**
+- `filename` (string, optional): Name of previously recorded file to analyze
+- `filepath` (string, optional): Full path to WAV file (external files)
+- `window` (string, optional): Window function - "hann", "hamming", "blackman", or "none" (default: "hann")
+- `fft_size` (integer, optional): FFT size, must be power of 2 between 64-65536 (auto-calculated if not specified)
+- `start_time` (float, optional): Start analysis at this time in seconds (default: 0)
+- `duration` (float, optional): Duration to analyze in seconds (default: entire file from start_time)
+
+**Note:** Must specify either `filename` OR `filepath`, not both.
+
+**Success Response (200):**
+```json
+{
+    "status": "success",
+    "file_info": {
+        "filename": "recording_20240101_120000.wav",
+        "original_metadata": {
+            "duration": 10.5,
+            "sample_rate": 44100,
+            "channels": 1,
+            "bit_depth": 16,
+            "total_samples": 463050
+        },
+        "analyzed_duration": 5.0,
+        "analyzed_samples": 220500,
+        "start_time": 2.0
+    },
+    "fft_analysis": {
+        "fft_size": 8192,
+        "window_type": "hann",
+        "sample_rate": 44100,
+        "frequency_resolution": 5.383,
+        "frequencies": [0, 5.383, 10.766, ...],
+        "magnitudes": [-80.5, -75.2, -82.1, ...],
+        "phases": [0.0, 1.57, -1.23, ...],
+        "peak_frequency": 1000.0,
+        "peak_magnitude": -20.5,
+        "spectral_centroid": 1250.5,
+        "frequency_bands": {
+            "sub_bass": {"range": "20-60 Hz", "avg_magnitude": -65.2, "peak_frequency": 45.0},
+            "bass": {"range": "60-250 Hz", "avg_magnitude": -45.8, "peak_frequency": 120.0},
+            "low_midrange": {"range": "250-500 Hz", "avg_magnitude": -35.1, "peak_frequency": 350.0},
+            "midrange": {"range": "500-2000 Hz", "avg_magnitude": -25.6, "peak_frequency": 1000.0},
+            "upper_midrange": {"range": "2000-4000 Hz", "avg_magnitude": -30.2, "peak_frequency": 2500.0},
+            "presence": {"range": "4000-6000 Hz", "avg_magnitude": -40.5, "peak_frequency": 5000.0},
+            "brilliance": {"range": "6000-20000 Hz", "avg_magnitude": -50.8, "peak_frequency": 8000.0}
+        }
+    },
+    "timestamp": "2024-01-01T12:00:00"
+}
+```
+
+### `/audio/analyze/fft-recording/<recording_id>` [POST]
+Perform FFT analysis on a specific recording by ID.
+
+**Path Parameters:**
+- `recording_id`: ID of the recording to analyze
+
+**Query Parameters:**
+- `window` (string, optional): Window function (default: "hann")
+- `fft_size` (integer, optional): FFT size, must be power of 2
+- `start_time` (float, optional): Start analysis time in seconds
+- `duration` (float, optional): Duration to analyze in seconds
+
+**Success Response (200):**
+```json
+{
+    "status": "success",
+    "recording_info": {
+        "recording_id": "rec_20240101_120000_abc123",
+        "filename": "recording_20240101_120000.wav",
+        "original_duration": 10.5,
+        "original_device": "hw:1,0",
+        "original_sample_rate": 44100,
+        "timestamp": "2024-01-01T12:00:00"
+    },
+    "analysis_info": {
+        "analyzed_duration": 10.5,
+        "analyzed_samples": 463050,
+        "start_time": 0
+    },
+    "fft_analysis": {
+        "fft_size": 8192,
+        "window_type": "hann",
+        "sample_rate": 44100,
+        "frequency_resolution": 5.383,
+        "frequencies": [0, 5.383, 10.766, ...],
+        "magnitudes": [-80.5, -75.2, -82.1, ...],
+        "phases": [0.0, 1.57, -1.23, ...],
+        "peak_frequency": 1000.0,
+        "peak_magnitude": -20.5,
+        "spectral_centroid": 1250.5,
+        "frequency_bands": {
+            "sub_bass": {"range": "20-60 Hz", "avg_magnitude": -65.2, "peak_frequency": 45.0},
+            "bass": {"range": "60-250 Hz", "avg_magnitude": -45.8, "peak_frequency": 120.0},
+            "low_midrange": {"range": "250-500 Hz", "avg_magnitude": -35.1, "peak_frequency": 350.0},
+            "midrange": {"range": "500-2000 Hz", "avg_magnitude": -25.6, "peak_frequency": 1000.0},
+            "upper_midrange": {"range": "2000-4000 Hz", "avg_magnitude": -30.2, "peak_frequency": 2500.0},
+            "presence": {"range": "4000-6000 Hz", "avg_magnitude": -40.5, "peak_frequency": 5000.0},
+            "brilliance": {"range": "6000-20000 Hz", "avg_magnitude": -50.8, "peak_frequency": 8000.0}
+        }
+    },
+    "analysis_timestamp": "2024-01-01T12:05:00"
+}
+```
+
+**Error Responses:**
+- `400 Bad Request`: Invalid parameters or file format
+- `404 Not Found`: Recording or file not found
+- `500 Internal Server Error`: Analysis processing error
 
 ## Audio Recording
 
