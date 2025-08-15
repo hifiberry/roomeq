@@ -1,3 +1,24 @@
+roomeq (0.3.0) bookworm; urgency=medium
+
+  * Major API enhancements and new features
+  * Migrated from FastAPI/uvicorn to Flask framework
+  * Added comprehensive FFT spectral analysis functionality
+  * Implemented modular FFT module (fft.py) for code organization
+  * Added FFT normalization feature for relative dB measurements
+  * Enhanced sine sweep generation with multiple consecutive sweeps
+  * Implemented background audio recording system with secure file management
+  * Added comprehensive recording management endpoints (start/stop/download/delete)
+  * Fixed alsaaudio compatibility issues with PY_SSIZE_T_CLEAN macro
+  * Updated comprehensive API documentation with new endpoints
+  * Added windowing functions support (Hann, Hamming, Blackman)
+  * Implemented frequency band analysis (sub-bass through brilliance)
+  * Added peak detection and spectral centroid calculation
+  * Enhanced error handling and parameter validation
+  * Added CORS support for web application integration
+  * Improved logging and debugging capabilities
+
+ -- HiFiBerry <support@hifiberry.com>  Thu, 15 Aug 2025 12:00:00 +0000
+
 roomeq (0.1.0) bookworm; urgency=medium
 
   * Initial release

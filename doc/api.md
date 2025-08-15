@@ -2,10 +2,10 @@
 
 ## Overview
 
-The RoomEQ Audio Processing API provides a comprehensive REST interface for microphone detection, sound pressure level (SPL) measurement, audio signal generation, and recording functionality. This API is designed for acoustic measurement systems, room correction, and audio testing applications.
+The RoomEQ Audio Processing API provides a comprehensive REST interface for microphone detection, sound pressure level (SPL) measurement, audio signal generation, recording, and FFT analysis functionality. This API is designed for acoustic measurement systems, room correction, and audio testing applications.
 
 **Base URL:** `http://localhost:10315`  
-**API Version:** 0.2.0  
+**API Version:** 0.3.0  
 **Framework:** Flask with CORS support
 **Documentation:** Available at the root endpoint `/`
 
@@ -35,9 +35,9 @@ Get API information and endpoint overview.
 ```json
 {
   "message": "RoomEQ Audio Processing API",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "framework": "Flask",
-  "description": "REST API for microphone detection, SPL measurement, and audio signal generation for acoustic measurements and room equalization",
+  "description": "REST API for microphone detection, SPL measurement, audio signal generation, recording, and FFT analysis for acoustic measurements and room equalization",
   "endpoints": {
     "info": {"/": "API information", "/version": "Version details"},
     "microphones": {"/microphones": "Detect microphones", "/microphones/raw": "Raw detection"},
@@ -71,7 +71,7 @@ Get detailed version information.
 **Response:**
 ```json
 {
-  "version": "0.2.0",
+  "version": "0.3.0",
   "api_name": "RoomEQ Audio Processing API",
   "features": [
     "Microphone detection with sensitivity and gain",

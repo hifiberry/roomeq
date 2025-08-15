@@ -170,13 +170,17 @@ def _validate_recording_file(filename: str) -> str:
 def get_version():
     """Get API version information."""
     return jsonify({
-        "version": "0.2.0",
+        "version": "0.3.0",
         "api_name": "RoomEQ Audio Processing API",
         "features": [
             "Microphone detection with sensitivity and gain",
             "SPL measurement",
             "White noise generation with keep-alive control",
-            "Real-time playback management"
+            "Multiple consecutive sine sweeps",
+            "Background audio recording to WAV files",
+            "FFT spectral analysis with normalization",
+            "Frequency band analysis and peak detection",
+            "Real-time playback and recording management"
         ]
     })
 
@@ -963,15 +967,19 @@ def root():
     """Root endpoint with comprehensive API information."""
     return jsonify({
         "message": "RoomEQ Audio Processing API",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "framework": "Flask",
-        "description": "REST API for microphone detection, SPL measurement, and audio signal generation for acoustic measurements and room equalization",
+        "description": "REST API for microphone detection, SPL measurement, audio signal generation, recording, and FFT analysis for acoustic measurements and room equalization",
         "features": [
             "Automatic microphone detection with sensitivity and gain information",
             "Real-time SPL (Sound Pressure Level) measurement",
             "White noise generation with keep-alive control",
             "Logarithmic sine sweep generation with multiple repeat support",
-            "Real-time playback management and status monitoring",
+            "Background audio recording to WAV files with secure file management",
+            "FFT spectral analysis with dB output and frequency normalization",
+            "Windowing functions support (Hann, Hamming, Blackman)",
+            "Frequency band analysis and automatic peak detection",
+            "Real-time playback and recording management",
             "Cross-Origin Resource Sharing (CORS) support for web applications"
         ],
         "endpoints": {
