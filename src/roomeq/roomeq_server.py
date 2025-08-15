@@ -372,6 +372,11 @@ def root():
     }
 
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for the roomeq-server console script."""
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=10315)
+
+
+if __name__ == "__main__":
+    main()

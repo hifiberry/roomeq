@@ -20,7 +20,7 @@ setup(
     install_requires=["fastapi", "pyalsaaudio", "numpy"],
     entry_points={
         'console_scripts': [
-            'roomeq-server = roomeq.roomeq_server:app',
+            'roomeq-server = roomeq.roomeq_server:main',
             'rms-level = roomeq.analysis:main',
         ],
     },
