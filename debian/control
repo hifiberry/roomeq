@@ -2,14 +2,16 @@ Source: roomeq
 Section: sound
 Priority: optional
 Maintainer: HiFiBerry <support@hifiberry.com>
-Build-Depends: debhelper-compat (= 13), dh-python, python3, python3-setuptools, python3-flask, python3-flask-cors, python3-numpy, python3-alsaaudio
+Build-Depends: debhelper-compat (= 13), dh-python, python3, python3-setuptools, python3-flask, python3-flask-cors, python3-numpy, python3-scipy, python3-alsaaudio
 Standards-Version: 4.5.0
 Homepage: https://github.com/hifiberry/roomeq
 
 Package: roomeq
 Architecture: all
-Depends: python3, python3-flask, python3-flask-cors, python3-numpy, python3-alsaaudio, ${python3:Depends}, ${misc:Depends}
+Depends: python3, python3-flask, python3-flask-cors, python3-numpy, python3-scipy, python3-alsaaudio, ${python3:Depends}, ${misc:Depends}
 Description: Audio measurement and room equalization REST API
  A comprehensive REST API for audio measurements including microphone
- detection, SPL measurement, and signal generation with keep-alive
- functionality for room equalization purposes.
+ detection, SPL measurement, signal generation, and advanced room EQ
+ optimization. Features scipy-based optimization algorithms with real-time
+ progress reporting, multiple target curves, and biquad filter generation
+ for professional room equalization purposes.
