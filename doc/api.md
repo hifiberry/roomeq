@@ -5,7 +5,7 @@
 The RoomEQ Audio Processing API provides a comprehensive REST interface for microphone detection, sound pressure level (SPL) measurement, audio signal generation, recording, FFT analysis, and **automatic room EQ optimization** functionality. This API is designed for acoustic measurement systems, room correction, and audio testing applications with real-time progress reporting.
 
 **Base URL:** `http://localhost:10315`  
-**API Version:** 0.5.0  
+**API Version:** 0.6.0  
 **Framework:** Flask with CORS support
 **Documentation:** Available at the root endpoint `/`
 
@@ -71,20 +71,36 @@ Get API information and endpoint overview.
 #### GET `/version`
 Get detailed version information.
 
+**Example Request:**
+```bash
+curl -X GET http://localhost:10315/version
+```
+
 **Response:**
 ```json
 {
-  "version": "0.3.0",
+  "version": "0.6.0",
   "api_name": "RoomEQ Audio Processing API",
   "features": [
     "Microphone detection with sensitivity and gain",
-    "SPL measurement with microphone calibration",
-    "White noise generation with keep-alive control",
-    "Logarithmic sine sweep generation with multiple repeat support",
-    "Background audio recording to WAV files",
-    "Real-time playback and recording management",
-    "Cross-Origin Resource Sharing (CORS) support"
-  ]
+    "SPL measurement",
+    "FFT analysis with windowing, normalization, and logarithmic frequency summarization",
+    "Audio recording with automatic cleanup",
+    "Sine sweep generation",
+    "White/pink noise generation",
+    "Automatic room EQ optimization with multiple target curves",
+    "Real-time optimization progress reporting",
+    "Parametric EQ filter generation (biquad coefficients)",
+    "Multiple optimizer presets with different smoothing characteristics",
+    "Scipy-based advanced optimization algorithms"
+  ],
+  "server_info": {
+    "python_version": "3.11.2",
+    "flask_version": "2.x",
+    "threading": "Multi-threaded request handling",
+    "audio_backend": "ALSA with arecord fallback for compatibility",
+    "optimization_backend": "SciPy with least squares curve fitting"
+  }
 }
 ```
 
