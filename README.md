@@ -138,14 +138,6 @@ const response = await fetch('/api/analyze', {
 });
 ```
 
-## Validation & Accuracy
-
-Accuracy verified with:
-- White noise test: 0.50 dB/decade slope ✅
-- Impulse response: 0.00 dB/decade slope ✅  
-- Sine sweep analysis: 0.000 dB/decade slope ✅
-- C reference algorithm comparison: ±0.1 dB agreement ✅
-
 ## Documentation
 
 - **[FFT_DOCUMENTATION.md](FFT_DOCUMENTATION.md)** - Mathematical algorithms and technical details
