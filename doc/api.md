@@ -2,10 +2,10 @@
 
 ## Overview
 
-The RoomEQ Audio Processing API provides a comprehensive REST interface for microphone detection, sound pressure level (SPL) measurement, audio signal generation, recording, and FFT analysis functionality. This API is designed for acoustic measurement systems, room correction, and audio testing applications.
+The RoomEQ Audio Processing API provides a comprehensive REST interface for microphone detection, sound pressure level (SPL) measurement, audio signal generation, recording, FFT analysis, and **automatic room EQ optimization** functionality. This API is designed for acoustic measurement systems, room correction, and audio testing applications with real-time progress reporting.
 
 **Base URL:** `http://localhost:10315`  
-**API Version:** 0.3.0  
+**API Version:** 0.5.0  
 **Framework:** Flask with CORS support
 **Documentation:** Available at the root endpoint `/`
 
@@ -14,11 +14,13 @@ The RoomEQ Audio Processing API provides a comprehensive REST interface for micr
 - **Microphone Detection**: Automatic detection of USB and built-in microphones with sensitivity and gain information
 - **SPL Measurement**: Accurate sound pressure level measurement with calibrated microphones
 - **Signal Generation**: White noise and logarithmic sine sweep generation with keep-alive functionality
-- **Signal Generation**: White noise and logarithmic sine sweep generation with keep-alive functionality; optional SoX-based sweep generator
 - **Multiple Sweep Support**: Generate consecutive sine sweeps for acoustic averaging
 - **Audio Recording**: Background recording to WAV files with secure file management
-- **FFT Analysis**: Comprehensive spectral analysis of WAV files with windowing functions, normalization, logarithmic frequency summarization, peak detection, frequency band analysis, and improved Power Spectral Density calculation with proper window correction
-- **Real-time Control**: Start, stop, extend, and monitor audio operations through REST endpoints
+- **FFT Analysis**: Comprehensive spectral analysis with windowing functions, normalization, and logarithmic frequency summarization
+- **🆕 EQ Optimization**: Automatic room EQ optimization with multiple target curves and real-time progress reporting
+- **🆕 Biquad Filter Generation**: Generate parametric EQ filters with complete coefficient sets
+- **🆕 Advanced Optimization**: Scipy-based least squares optimization with psychoacoustic smoothing
+- **Real-time Control**: Start, stop, extend, and monitor operations through REST endpoints
 - **Cross-Origin Support**: CORS enabled for web application integration
 
 ## Authentication
@@ -91,6 +93,11 @@ Get detailed version information.
 #### GET `/microphones`
 Get detected microphones with detailed properties.
 
+**Example Request:**
+```bash
+curl -X GET http://localhost:10315/microphones
+```
+
 **Response:**
 ```json
 [
@@ -113,6 +120,11 @@ Get detected microphones with detailed properties.
 
 #### GET `/microphones/raw`
 Get microphones in raw format (bash script compatible).
+
+**Example Request:**
+```bash
+curl -X GET http://localhost:10315/microphones/raw
+```
 
 **Response:**
 ```json
@@ -157,9 +169,16 @@ Measure sound pressure level using specified or auto-detected microphone.
 - `device` (optional): ALSA device name (e.g., "hw:1,0"). Auto-detects if not specified
 - `duration` (optional): Measurement duration in seconds (0.1-10.0, default: 1.0)
 
-**Example Request:**
-```
-GET /spl/measure?device=hw:1,0&duration=2.0
+**Example Requests:**
+```bash
+# Basic SPL measurement with auto-detection
+curl -X GET http://localhost:10315/spl/measure
+
+# Specific device and duration
+curl -X GET "http://localhost:10315/spl/measure?device=hw:1,0&duration=2.0"
+
+# Long measurement for stable reading
+curl -X GET "http://localhost:10315/spl/measure?duration=5.0"
 ```
 
 **Response:**
@@ -198,9 +217,16 @@ Start white noise playback with automatic timeout.
 - `amplitude` (optional): Amplitude level (0.0-1.0, default: 0.5)
 - `device` (optional): Output device (e.g., "hw:0,0"). Uses default if not specified
 
-**Example Request:**
-```
-POST /audio/noise/start?duration=5&amplitude=0.3&device=hw:0,0
+**Example Requests:**
+```bash
+# Basic noise generation
+curl -X POST http://localhost:10315/audio/noise/start
+
+# Custom duration and amplitude
+curl -X POST "http://localhost:10315/audio/noise/start?duration=5&amplitude=0.3"
+
+# Specific output device
+curl -X POST "http://localhost:10315/audio/noise/start?duration=10&amplitude=0.4&device=hw:0,0"
 ```
 
 **Response:**
@@ -210,7 +236,7 @@ POST /audio/noise/start?duration=5&amplitude=0.3&device=hw:0,0
   "duration": 5.0,
   "amplitude": 0.3,
   "device": "hw:0,0",
-  "stop_time": "2025-08-14T15:30:45.123456",
+  "stop_time": "2025-08-18T15:30:45.123456",
   "message": "Noise playback started for 5.0 seconds"
 }
 ```
@@ -221,9 +247,13 @@ Extend current noise playback duration (keep-alive mechanism).
 **Query Parameters:**
 - `duration` (optional): Additional duration in seconds (1.0-30.0, default: 3.0)
 
-**Example Request:**
-```
-POST /audio/noise/keep-playing?duration=3
+**Example Requests:**
+```bash
+# Extend by default 3 seconds
+curl -X POST http://localhost:10315/audio/noise/keep-playing
+
+# Extend by specific duration
+curl -X POST "http://localhost:10315/audio/noise/keep-playing?duration=5"
 ```
 
 **Response:**
@@ -246,6 +276,11 @@ POST /audio/noise/keep-playing?duration=3
 #### POST `/audio/noise/stop`
 Stop current noise playback immediately.
 
+**Example Request:**
+```bash
+curl -X POST http://localhost:10315/audio/noise/stop
+```
+
 **Response:**
 ```json
 {
@@ -264,6 +299,11 @@ Stop current noise playback immediately.
 
 #### GET `/audio/noise/status`
 Get current noise playback status.
+
+**Example Request:**
+```bash
+curl -X GET http://localhost:10315/audio/noise/status
+```
 
 **Response:**
 ```json
@@ -623,6 +663,461 @@ Perform FFT analysis on a specific recording by ID.
 - `404 Not Found`: Recording or file not found
 - `500 Internal Server Error`: Analysis processing error
 
+## EQ Optimization
+
+The API provides advanced room EQ optimization functionality with real-time progress reporting. The optimization system uses scipy-based algorithms to generate parametric EQ filters that correct room response to match target curves.
+
+### Target Curves and Optimizer Presets
+
+#### GET `/eq/presets/targets`
+List available target response curves for optimization.
+
+**Example Request:**
+```bash
+curl -X GET http://localhost:10315/eq/presets/targets
+```
+
+**Response:**
+```json
+{
+  "flat": {
+    "name": "Flat Response",
+    "description": "Perfectly flat frequency response (0 dB across all frequencies)"
+  },
+  "weighted_flat": {
+    "name": "Weighted Flat",
+    "description": "Flat response with psychoacoustic weighting for natural sound"
+  },
+  "falling_slope": {
+    "name": "Falling Slope",
+    "description": "Gentle high-frequency roll-off (-1 dB/octave above 1 kHz)"
+  },
+  "room_only": {
+    "name": "Room Only",
+    "description": "Corrects room resonances while preserving speaker character"
+  },
+  "harman": {
+    "name": "Harman Target Curve",
+    "description": "Research-based preferred room response curve with controlled bass lift"
+  },
+  "vocal_presence": {
+    "name": "Vocal Presence",
+    "description": "Enhanced clarity for vocal content with midrange emphasis"
+  }
+}
+```
+
+#### GET `/eq/presets/optimizers`
+List available optimizer configurations with different trade-offs.
+
+**Example Request:**
+```bash
+curl -X GET http://localhost:10315/eq/presets/optimizers
+```
+
+**Response:**
+```json
+{
+  "default": {
+    "name": "Default",
+    "description": "Balanced optimization with moderate smoothing",
+    "smoothing_factor": 1.0,
+    "max_gain_db": 12.0,
+    "min_q": 0.5,
+    "max_q": 10.0
+  },
+  "verysmooth": {
+    "name": "Very Smooth", 
+    "description": "Minimal corrections with heavy smoothing for natural sound",
+    "smoothing_factor": 3.0,
+    "max_gain_db": 6.0
+  },
+  "smooth": {
+    "name": "Smooth",
+    "description": "Gentle corrections with increased smoothing",
+    "smoothing_factor": 2.0,
+    "max_gain_db": 8.0
+  },
+  "aggressive": {
+    "name": "Aggressive",
+    "description": "Strong corrections with minimal smoothing",
+    "max_gain_db": 15.0,
+    "smoothing_factor": 0.5
+  },
+  "precise": {
+    "name": "Precise",
+    "description": "High-precision corrections for nearfield monitors",
+    "smoothing_factor": 0.8,
+    "max_gain_db": 10.0,
+    "min_q": 0.8,
+    "max_q": 15.0
+  }
+}
+```
+
+### EQ Optimization Process
+
+#### POST `/eq/optimize/start`
+Start EQ optimization from recording or FFT data with real-time progress reporting.
+
+**Content-Type:** `application/json`
+
+**Request Body Options:**
+
+**Option 1: From Recording (Recommended)**
+```json
+{
+  "recording_id": "abc12345",
+  "target_curve": "weighted_flat",
+  "optimizer_preset": "default",
+  "filter_count": 8,
+  "window": "hann",
+  "points_per_octave": 12
+}
+```
+
+**Option 2: From FFT Data**
+```json
+{
+  "frequencies": [20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200],
+  "magnitudes": [-5.2, -3.1, -2.8, -1.5, -0.8, 2.1, 3.5, 1.2, -1.8, -3.2, -4.1],
+  "target_curve": "harman", 
+  "optimizer_preset": "smooth",
+  "filter_count": 6,
+  "sample_rate": 48000
+}
+```
+
+**Parameters:**
+- `recording_id` (string, option 1): ID of completed recording to analyze
+- `frequencies` (array, option 2): Frequency values in Hz
+- `magnitudes` (array, option 2): Magnitude values in dB (same length as frequencies)
+- `target_curve` (string): Target response curve name (see `/eq/presets/targets`)
+- `optimizer_preset` (string): Optimization style (see `/eq/presets/optimizers`)
+- `filter_count` (integer, optional): Number of EQ filters to generate (1-20, default: 8)
+- `window` (string, optional): FFT window function for recording analysis
+- `points_per_octave` (integer, optional): Frequency resolution (1-100, default: 12)
+- `sample_rate` (integer, optional): Audio sample rate for FFT data (default: 48000)
+
+**Example Requests:**
+```bash
+# Start optimization from recording
+curl -X POST http://localhost:10315/eq/optimize/start \
+  -H "Content-Type: application/json" \
+  -d '{
+    "recording_id": "rec_20250818_143015_abc123",
+    "target_curve": "weighted_flat",
+    "optimizer_preset": "default",
+    "filter_count": 8
+  }'
+
+# Start optimization from FFT data  
+curl -X POST http://localhost:10315/eq/optimize/start \
+  -H "Content-Type: application/json" \
+  -d '{
+    "frequencies": [63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000],
+    "magnitudes": [2.1, 3.8, 4.2, 3.1, 1.9, 0.8, -0.5, -1.2, -0.8, 0.2, 1.5, 2.8, 3.2, 2.1, 0.9, -1.2, -2.8, -3.5, -2.9, -1.8, -0.5, 1.2, 2.5],
+    "target_curve": "harman",
+    "optimizer_preset": "smooth", 
+    "filter_count": 6
+  }'
+```
+
+**Response:**
+```json
+{
+  "status": "started",
+  "optimization_id": "opt_20250818_143025_xyz789",
+  "message": "EQ optimization started with 8 filters",
+  "estimated_duration": 15.0,
+  "target_curve": "weighted_flat",
+  "optimizer_preset": "default", 
+  "filter_count": 8
+}
+```
+
+#### GET `/eq/optimize/status/<optimization_id>`
+Get real-time optimization progress with detailed step information.
+
+**Example Request:**
+```bash
+curl -X GET http://localhost:10315/eq/optimize/status/opt_20250818_143025_xyz789
+```
+
+**Response (In Progress):**
+```json
+{
+  "optimization_id": "opt_20250818_143025_xyz789",
+  "status": "optimizing", 
+  "progress": 65.0,
+  "current_step": "Optimizing filter 5/8",
+  "steps_completed": 13,
+  "total_steps": 20,
+  "elapsed_time": 9.2,
+  "estimated_remaining": 5.1,
+  "current_filter": {
+    "index": 5,
+    "frequency": 2500.0,
+    "gain_db": -3.8,
+    "q": 2.1,
+    "filter_type": "peaking_eq"
+  },
+  "intermediate_rms_error": 3.7,
+  "target_rms_error": 2.0
+}
+```
+
+**Response (Completed):**
+```json
+{
+  "optimization_id": "opt_20250818_143025_xyz789", 
+  "status": "completed",
+  "progress": 100.0,
+  "current_step": "Optimization completed",
+  "steps_completed": 20,
+  "total_steps": 20,
+  "elapsed_time": 14.8,
+  "final_rms_error": 1.9,
+  "improvement_db": 8.3,
+  "message": "EQ optimization completed successfully with 8 filters"
+}
+```
+
+#### POST `/eq/optimize/cancel/<optimization_id>`
+Cancel a running optimization process.
+
+**Example Request:**
+```bash
+curl -X POST http://localhost:10315/eq/optimize/cancel/opt_20250818_143025_xyz789
+```
+
+**Response:**
+```json
+{
+  "status": "cancelled",
+  "optimization_id": "opt_20250818_143025_xyz789",
+  "message": "Optimization cancelled successfully"
+}
+```
+
+#### GET `/eq/optimize/result/<optimization_id>`
+Get complete optimization results including generated EQ filters.
+
+**Example Request:**
+```bash
+curl -X GET http://localhost:10315/eq/optimize/result/opt_20250818_143025_xyz789
+```
+
+**Response:**
+```json
+{
+  "optimization_id": "opt_20250818_143025_xyz789",
+  "status": "completed",
+  "success": true,
+  "target_curve": "weighted_flat",
+  "optimizer_preset": "default",
+  "processing_time": 14.8,
+  "final_rms_error": 1.9,
+  "improvement_db": 8.3,
+  "filters": [
+    {
+      "index": 1,
+      "filter_type": "peaking_eq",
+      "frequency": 120.0,
+      "q": 1.5,
+      "gain_db": 4.2,
+      "description": "Peaking EQ 120Hz 4.2dB",
+      "text_format": "eq:120:1.5:4.2",
+      "coefficients": {
+        "b": [1.051, -1.894, 0.851],
+        "a": [1.000, -1.894, 0.902]
+      }
+    },
+    {
+      "index": 2, 
+      "filter_type": "peaking_eq",
+      "frequency": 315.0,
+      "q": 2.1,
+      "gain_db": -2.8,
+      "description": "Peaking EQ 315Hz -2.8dB",
+      "text_format": "eq:315:2.1:-2.8",
+      "coefficients": {
+        "b": [0.945, -1.823, 0.883],
+        "a": [1.000, -1.823, 0.828]
+      }
+    },
+    {
+      "index": 3,
+      "filter_type": "peaking_eq", 
+      "frequency": 2500.0,
+      "q": 2.8,
+      "gain_db": -3.8,
+      "description": "Peaking EQ 2500Hz -3.8dB",
+      "text_format": "eq:2500:2.8:-3.8",
+      "coefficients": {
+        "b": [0.932, -1.687, 0.756],
+        "a": [1.000, -1.687, 0.688]
+      }
+    }
+  ],
+  "frequency_response": {
+    "frequencies": [20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400],
+    "original_response": [-8.2, -7.1, -5.9, -4.8, -3.5, -2.1, -0.8, 1.2, 2.8, 3.5, 2.9, 1.8, 0.5, -1.2],
+    "corrected_response": [-0.8, -0.5, -0.2, 0.1, 0.3, 0.2, -0.1, -0.3, -0.1, 0.2, 0.4, 0.1, -0.2, -0.4],
+    "target_response": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  },
+  "timestamp": "2025-08-18T14:30:40.123456"
+}
+```
+
+### EQ Optimization Usage Examples
+
+#### Complete Room Correction Workflow
+```bash
+#!/bin/bash
+# Complete room correction measurement and optimization
+
+API_URL="http://localhost:10315"
+
+echo "=== Starting Room Correction Workflow ==="
+
+# 1. Start recording for room measurement
+echo "1. Starting room measurement recording..."
+RECORD_RESPONSE=$(curl -s -X POST "$API_URL/audio/record/start?duration=45&sample_rate=48000")
+RECORDING_ID=$(echo "$RECORD_RESPONSE" | jq -r '.recording_id')
+echo "   Recording ID: $RECORDING_ID"
+
+# 2. Generate sine sweeps for room analysis
+sleep 2
+echo "2. Generating sine sweeps..."
+curl -s -X POST "$API_URL/audio/sweep/start?start_freq=20&end_freq=20000&duration=12&sweeps=3&amplitude=0.4" > /dev/null
+echo "   3 sweeps × 12s = 36 seconds total"
+
+# 3. Wait for recording to complete
+echo "3. Waiting for recording to complete..."
+while true; do
+    RECORD_STATUS=$(curl -s "$API_URL/audio/record/status/$RECORDING_ID")
+    COMPLETED=$(echo "$RECORD_STATUS" | jq -r '.completed')
+    if [ "$COMPLETED" = "true" ]; then
+        echo "   Recording completed!"
+        break
+    fi
+    sleep 2
+done
+
+# 4. Start EQ optimization 
+echo "4. Starting EQ optimization..."
+OPT_RESPONSE=$(curl -s -X POST "$API_URL/eq/optimize/start" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"recording_id\": \"$RECORDING_ID\",
+    \"target_curve\": \"weighted_flat\", 
+    \"optimizer_preset\": \"default\",
+    \"filter_count\": 8,
+    \"points_per_octave\": 12
+  }")
+
+OPT_ID=$(echo "$OPT_RESPONSE" | jq -r '.optimization_id')
+echo "   Optimization ID: $OPT_ID"
+
+# 5. Monitor optimization progress
+echo "5. Monitoring optimization progress..."
+while true; do
+    OPT_STATUS=$(curl -s "$API_URL/eq/optimize/status/$OPT_ID")
+    STATUS=$(echo "$OPT_STATUS" | jq -r '.status')
+    PROGRESS=$(echo "$OPT_STATUS" | jq -r '.progress')
+    CURRENT_STEP=$(echo "$OPT_STATUS" | jq -r '.current_step')
+    
+    echo "   Progress: ${PROGRESS}% - $CURRENT_STEP"
+    
+    if [ "$STATUS" = "completed" ]; then
+        echo "   Optimization completed!"
+        break
+    elif [ "$STATUS" = "error" ]; then
+        echo "   Optimization failed!"
+        exit 1
+    fi
+    sleep 2
+done
+
+# 6. Get final results
+echo "6. Retrieving optimization results..."
+RESULT=$(curl -s "$API_URL/eq/optimize/result/$OPT_ID")
+
+# Extract key metrics
+FILTER_COUNT=$(echo "$RESULT" | jq '.filters | length')
+IMPROVEMENT=$(echo "$RESULT" | jq -r '.improvement_db')
+RMS_ERROR=$(echo "$RESULT" | jq -r '.final_rms_error')
+
+echo "=== Optimization Results ==="
+echo "Filters generated: $FILTER_COUNT"
+echo "Improvement: ${IMPROVEMENT} dB"
+echo "Final RMS error: ${RMS_ERROR} dB"
+
+# 7. Save results and show filters
+echo "$RESULT" > "eq_optimization_result_${OPT_ID}.json"
+echo "Full results saved to: eq_optimization_result_${OPT_ID}.json"
+
+echo ""
+echo "=== Generated EQ Filters ==="
+echo "$RESULT" | jq -r '.filters[] | "Filter \(.index): \(.filter_type) \(.frequency)Hz Q=\(.q) \(.gain_db)dB"'
+
+echo ""
+echo "=== Text Format (for import into EQ software) ==="
+echo "$RESULT" | jq -r '.filters[].text_format'
+
+echo ""
+echo "Room correction workflow completed successfully!"
+```
+
+#### Quick Optimization from Existing FFT Data
+```bash
+# Optimize using pre-analyzed frequency response data
+curl -X POST http://localhost:10315/eq/optimize/start \
+  -H "Content-Type: application/json" \
+  -d '{
+    "frequencies": [63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+    "magnitudes": [3.2, 4.1, 2.8, 1.2, 0.0, -2.1, -3.8, -2.5, -1.2],
+    "target_curve": "harman",
+    "optimizer_preset": "smooth",
+    "filter_count": 5,
+    "sample_rate": 48000
+  }' | jq '.optimization_id'
+```
+
+#### Monitor Multiple Optimizations
+```bash
+#!/bin/bash
+# Monitor multiple optimization jobs
+
+API_URL="http://localhost:10315"
+OPT_IDS=("opt_id_1" "opt_id_2" "opt_id_3")
+
+while true; do
+    ALL_COMPLETE=true
+    
+    for OPT_ID in "${OPT_IDS[@]}"; do
+        STATUS_RESPONSE=$(curl -s "$API_URL/eq/optimize/status/$OPT_ID")
+        STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.status')
+        PROGRESS=$(echo "$STATUS_RESPONSE" | jq -r '.progress')
+        
+        if [ "$STATUS" != "completed" ] && [ "$STATUS" != "error" ]; then
+            ALL_COMPLETE=false
+            echo "$OPT_ID: ${PROGRESS}% ($STATUS)"
+        else
+            echo "$OPT_ID: $STATUS"
+        fi
+    done
+    
+    if [ "$ALL_COMPLETE" = true ]; then
+        echo "All optimizations completed!"
+        break
+    fi
+    
+    sleep 3
+done
+```
+
 ## Audio Recording
 
 ### Background Recording to WAV Files
@@ -772,10 +1267,14 @@ DELETE /audio/record/delete-file/recording_abc12345.wav
 ### Basic SPL Measurement
 ```bash
 # Measure SPL for 1 second using auto-detected microphone
-curl "http://localhost:10315/spl/measure"
+curl -X GET http://localhost:10315/spl/measure
 
 # Measure SPL for 3 seconds using specific device
-curl "http://localhost:10315/spl/measure?device=hw:1,0&duration=3.0"
+curl -X GET "http://localhost:10315/spl/measure?device=hw:1,0&duration=3.0"
+
+# Extract just the SPL value using jq
+SPL=$(curl -s http://localhost:10315/spl/measure | jq -r '.spl_db')
+echo "Current SPL: ${SPL} dB"
 ```
 
 ### Noise Generation with Keep-Alive
@@ -787,10 +1286,10 @@ curl -X POST "http://localhost:10315/audio/noise/start?duration=3&amplitude=0.5"
 curl -X POST "http://localhost:10315/audio/noise/keep-playing?duration=3"
 
 # Check status
-curl "http://localhost:10315/audio/noise/status"
+curl -X GET http://localhost:10315/audio/noise/status
 
-# Stop playback
-curl -X POST "http://localhost:10315/audio/noise/stop"
+# Stop playback manually
+curl -X POST http://localhost:10315/audio/noise/stop
 ```
 
 ### Sine Sweep Generation
@@ -808,7 +1307,7 @@ curl -X POST "http://localhost:10315/audio/sweep/start?start_freq=200&end_freq=2
 curl -X POST "http://localhost:10315/audio/sweep/start?start_freq=20&end_freq=20000&duration=8&sweeps=2&amplitude=0.3&generator=sine_sox"
 
 # Check sweep status (shows sweep details)
-curl "http://localhost:10315/audio/noise/status"
+curl -X GET http://localhost:10315/audio/noise/status
 ```
 
 ### Audio Recording Workflow

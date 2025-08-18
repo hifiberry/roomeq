@@ -147,7 +147,7 @@ def validate_float_param(param_name: str, value: str, min_val: float = None, max
 def get_version():
     """Get API version information."""
     return jsonify({
-        "version": "0.3.0",
+        "version": "0.5.0",
         "api_name": "RoomEQ Audio Processing API",
         "features": [
             "Microphone detection with sensitivity and gain",
@@ -155,13 +155,19 @@ def get_version():
             "FFT analysis with windowing, normalization, and logarithmic frequency summarization",
             "Audio recording with automatic cleanup",
             "Sine sweep generation",
-            "White/pink noise generation"
+            "White/pink noise generation",
+            "Automatic room EQ optimization with multiple target curves",
+            "Real-time optimization progress reporting",
+            "Parametric EQ filter generation (biquad coefficients)",
+            "Multiple optimizer presets with different smoothing characteristics",
+            "Scipy-based advanced optimization algorithms"
         ],
         "server_info": {
             "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
             "flask_version": "2.x",
             "threading": "Multi-threaded request handling",
-            "audio_backend": "ALSA with arecord fallback for compatibility"
+            "audio_backend": "ALSA with arecord fallback for compatibility",
+            "optimization_backend": "SciPy with least squares curve fitting"
         }
     })
 
@@ -1575,7 +1581,7 @@ def root():
                             "bass": {"range": "60-250 Hz", "avg_magnitude": -45.2, "peak_frequency": 120.0},
                             "midrange": {"range": "500-2000 Hz", "avg_magnitude": -25.8, "peak_frequency": 1000.0}
                         },
-                        "normalization": {"applied": false}
+                        "normalization": {"applied": False}
                     },
                     "timestamp": "2025-08-15T12:25:00.123456"
                 },
@@ -1606,7 +1612,7 @@ def root():
                         "frequency_bands": {
                             "bass": {"range": "60-250 Hz", "avg_magnitude": -45.2, "peak_frequency": 120.0}
                         },
-                        "normalization": {"applied": false}
+                        "normalization": {"applied": False}
                     },
                     "timestamp": "2025-08-15T12:25:00.123456"
                 }
@@ -1679,7 +1685,7 @@ def root():
                     "example": {
                         "optimization_id": "opt_abc12345",
                         "status": "completed",
-                        "success": true,
+                        "success": True,
                         "target_curve": "weighted_flat",
                         "optimizer_preset": "default",
                         "processing_time": 18.7,
