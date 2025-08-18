@@ -1,3 +1,20 @@
+roomeq (0.6.0) bookworm; urgency=medium
+
+  * Advanced EQ optimization system with SciPy integration
+  * Comprehensive biquad filter implementation (HP/LP/BP/Notch/Peaking/Shelving)
+  * Real-time optimization progress reporting with configurable intervals
+  * Expert classification system for target curves and optimizer presets
+  * API key serving for both target curves and optimizer presets
+  * Enhanced REST API with intermediate results support
+  * Target curve management with expert/beginner categorization
+  * Optimizer preset system with multiple algorithms and parameters
+  * Custom JSON serialization for complex optimization results
+  * Comprehensive API documentation with curl examples
+  * Version endpoint with detailed feature list and server information
+  * Complete migration from old RoomEQ system to new REST API architecture
+
+ -- HiFiBerry <support@hifiberry.com>  Sun, 18 Aug 2025 12:00:00 +0000
+
 roomeq (0.3.0) bookworm; urgency=medium
 
   * Major API enhancements and new features
