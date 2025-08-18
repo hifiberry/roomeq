@@ -178,6 +178,7 @@ def get_optimizer_info(preset_name: str) -> Dict[str, Any]:
         raise ValueError(f"Unknown optimizer preset: {preset_name}")
         
     return {
+        "key": preset_name,
         "preset": preset_name,
         **OPTIMIZER_PRESETS[preset_name]
     }

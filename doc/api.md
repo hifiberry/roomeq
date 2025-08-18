@@ -739,40 +739,59 @@ curl -X GET http://localhost:10315/eq/presets/optimizers
 **Response:**
 ```json
 {
-  "default": {
-    "name": "Default",
-    "description": "Balanced optimization with moderate smoothing",
-    "smoothing_factor": 1.0,
-    "max_gain_db": 12.0,
-    "min_q": 0.5,
-    "max_q": 10.0
-  },
-  "verysmooth": {
-    "name": "Very Smooth", 
-    "description": "Minimal corrections with heavy smoothing for natural sound",
-    "smoothing_factor": 3.0,
-    "max_gain_db": 6.0
-  },
-  "smooth": {
-    "name": "Smooth",
-    "description": "Gentle corrections with increased smoothing",
-    "smoothing_factor": 2.0,
-    "max_gain_db": 8.0
-  },
-  "aggressive": {
-    "name": "Aggressive",
-    "description": "Strong corrections with minimal smoothing",
-    "max_gain_db": 15.0,
-    "smoothing_factor": 0.5
-  },
-  "precise": {
-    "name": "Precise",
-    "description": "High-precision corrections for nearfield monitors",
-    "smoothing_factor": 0.8,
-    "max_gain_db": 10.0,
-    "min_q": 0.8,
-    "max_q": 15.0
-  }
+  "success": true,
+  "optimizer_presets": [
+    {
+      "key": "default",
+      "preset": "default",
+      "name": "Default",
+      "description": "Balanced optimization with moderate Q values",
+      "qmax": 10,
+      "mindb": -10,
+      "maxdb": 3,
+      "add_highpass": true
+    },
+    {
+      "key": "verysmooth", 
+      "preset": "verysmooth",
+      "name": "Very Smooth",
+      "description": "Gentle correction with low Q values",
+      "qmax": 2,
+      "mindb": -10,
+      "maxdb": 3,
+      "add_highpass": true
+    },
+    {
+      "key": "smooth",
+      "preset": "smooth", 
+      "name": "Smooth",
+      "description": "Moderate correction with medium Q values",
+      "qmax": 5,
+      "mindb": -10,
+      "maxdb": 3,
+      "add_highpass": true
+    },
+    {
+      "key": "aggressive",
+      "preset": "aggressive",
+      "name": "Aggressive",
+      "description": "Strong correction with high Q values",
+      "qmax": 20,
+      "mindb": -20,
+      "maxdb": 6,
+      "add_highpass": true
+    },
+    {
+      "key": "precise",
+      "preset": "precise",
+      "name": "Precise",
+      "description": "High precision correction for detailed tuning",
+      "qmax": 15,
+      "mindb": -15,
+      "maxdb": 5,
+      "add_highpass": false
+    }
+  ]
 }
 ```
 
