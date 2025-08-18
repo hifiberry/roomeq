@@ -162,27 +162,7 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
         # Create frequency axis
         frequencies = np.fft.rfftfreq(fft_size, 1/sample_rate)
         
-        # Apply psychoacoustic smoothing if requested (before normalization)
-        smoothing_info = {}
-        if psychoacoustic_smoothing is not None:
-            try:
-                magnitude_db = apply_psychoacoustic_smoothing(
-                    frequencies, magnitude_db, psychoacoustic_smoothing
-                )
-                smoothing_info = {
-                    "applied": True,
-                    "smoothing_factor": float(psychoacoustic_smoothing),
-                    "type": "psychoacoustic"
-                }
-            except Exception as e:
-                smoothing_info = {
-                    "applied": False,
-                    "error": str(e)
-                }
-        else:
-            smoothing_info = {"applied": False}
-        
-        # Apply normalization if requested (after smoothing)
+        # Apply normalization if requested (before any summarization)
         normalization_info = {}
         if normalize is not None:
             # Find the frequency bin closest to the normalization frequency
@@ -197,8 +177,7 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
                 "requested_freq": float(normalize),
                 "actual_freq": float(normalize_freq_actual),
                 "reference_level_db": float(normalize_level_db),
-                "applied": True,
-                "applied_after_smoothing": smoothing_info["applied"]
+                "applied": True
             }
         else:
             normalization_info = {"applied": False}
@@ -280,7 +259,6 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
             'spectral_centroid': float(spectral_centroid),
             'frequency_bands': frequency_bands,
             'normalization': normalization_info,
-            'smoothing': smoothing_info,
             'spectral_density': {
                 'type': 'Magnitude Spectrum',
                 'units': 'dB re FS',
@@ -290,18 +268,66 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
             }
         }
         
-        # Add logarithmic summarization if requested
+        # Add logarithmic summarization if requested (after normalization)
         if points_per_octave is not None:
             try:
                 log_summary = summarize_fft_log_frequency(
                     frequencies, magnitude_db, points_per_octave
                 )
+                
+                # Apply psychoacoustic smoothing to log frequency summary if requested
+                if psychoacoustic_smoothing is not None:
+                    try:
+                        log_freqs = np.array(log_summary['frequencies'])
+                        log_mags = np.array(log_summary['magnitudes'])
+                        smoothed_log_mags = apply_psychoacoustic_smoothing(
+                            log_freqs, log_mags, psychoacoustic_smoothing
+                        )
+                        log_summary['magnitudes'] = smoothed_log_mags.tolist()
+                        log_summary['smoothing'] = {
+                            "applied": True,
+                            "smoothing_factor": float(psychoacoustic_smoothing),
+                            "type": "psychoacoustic"
+                        }
+                    except Exception as e:
+                        log_summary['smoothing'] = {
+                            "applied": False,
+                            "error": str(e)
+                        }
+                else:
+                    log_summary['smoothing'] = {"applied": False}
+                
                 result['log_frequency_summary'] = log_summary
             except Exception as e:
                 # If summarization fails, add error info but continue
                 result['log_frequency_summary'] = {
                     'error': f"Summarization failed: {str(e)}",
                     'points_per_octave': points_per_octave
+                }
+        
+        # Normalize magnitude to reference frequency (after smoothing)
+        norm_freq = kwargs.get('normalize_frequency', 1000.0)
+        if norm_freq is not None and len(magnitude_db) > 0:
+            try:
+                # Find closest frequency to the target
+                freq_diff = np.abs(frequencies - norm_freq)
+                norm_idx = np.argmin(freq_diff)
+                norm_value = magnitude_db[norm_idx]
+                magnitude_db = magnitude_db - norm_value
+                
+                result.update({
+                    'magnitudes': magnitude_db.tolist(),
+                    'normalization': {
+                        'applied': True,
+                        'target_frequency': float(norm_freq),
+                        'actual_frequency': float(frequencies[norm_idx]),
+                        'normalization_value': float(norm_value)
+                    }
+                })
+            except Exception as e:
+                result['normalization'] = {
+                    'applied': False,
+                    'error': f"Normalization failed: {str(e)}"
                 }
         
         return result
