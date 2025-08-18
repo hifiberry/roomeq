@@ -162,7 +162,7 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
         # Create frequency axis
         frequencies = np.fft.rfftfreq(fft_size, 1/sample_rate)
         
-        # Apply psychoacoustic smoothing if requested
+        # Apply psychoacoustic smoothing if requested (before normalization)
         smoothing_info = {}
         if psychoacoustic_smoothing is not None:
             try:
@@ -182,7 +182,7 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
         else:
             smoothing_info = {"applied": False}
         
-        # Apply normalization if requested
+        # Apply normalization if requested (after smoothing)
         normalization_info = {}
         if normalize is not None:
             # Find the frequency bin closest to the normalization frequency
@@ -197,7 +197,8 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
                 "requested_freq": float(normalize),
                 "actual_freq": float(normalize_freq_actual),
                 "reference_level_db": float(normalize_level_db),
-                "applied": True
+                "applied": True,
+                "applied_after_smoothing": smoothing_info["applied"]
             }
         else:
             normalization_info = {"applied": False}
@@ -404,7 +405,7 @@ def compute_fft_time_averaged(audio_data: np.ndarray, sample_rate: int, window_t
             magnitude_db = 10 * np.log10(avg_power + 1e-20)
             magnitude_db[~np.isfinite(magnitude_db)] = -np.inf
 
-        # Apply psychoacoustic smoothing if requested
+        # Apply psychoacoustic smoothing if requested (before normalization)
         smoothing_info = {}
         if psychoacoustic_smoothing is not None:
             try:
@@ -424,7 +425,7 @@ def compute_fft_time_averaged(audio_data: np.ndarray, sample_rate: int, window_t
         else:
             smoothing_info = {"applied": False}
 
-        # Normalization (optional)
+        # Normalization (optional, after smoothing)
         normalization_info = {"applied": False}
         if normalize is not None:
             normalize_idx = int(np.argmin(np.abs(frequencies - normalize)))
@@ -434,7 +435,8 @@ def compute_fft_time_averaged(audio_data: np.ndarray, sample_rate: int, window_t
                 "requested_freq": float(normalize),
                 "actual_freq": float(frequencies[normalize_idx]),
                 "reference_level_db": normalize_level_db,
-                "applied": True
+                "applied": True,
+                "applied_after_smoothing": smoothing_info["applied"]
             }
 
         # ENBW (informational)
