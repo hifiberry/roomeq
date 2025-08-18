@@ -167,6 +167,7 @@ def get_target_curve_info(curve_name: str) -> Dict[str, Any]:
         raise ValueError(f"Unknown target curve: {curve_name}")
     
     return {
+        "key": curve_name,
         "name": curve_name,
         **TARGET_CURVES[curve_name]
     }

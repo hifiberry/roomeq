@@ -680,30 +680,51 @@ curl -X GET http://localhost:10315/eq/presets/targets
 **Response:**
 ```json
 {
-  "flat": {
-    "name": "Flat Response",
-    "description": "Perfectly flat frequency response (0 dB across all frequencies)"
-  },
-  "weighted_flat": {
-    "name": "Weighted Flat",
-    "description": "Flat response with psychoacoustic weighting for natural sound"
-  },
-  "falling_slope": {
-    "name": "Falling Slope",
-    "description": "Gentle high-frequency roll-off (-1 dB/octave above 1 kHz)"
-  },
-  "room_only": {
-    "name": "Room Only",
-    "description": "Corrects room resonances while preserving speaker character"
-  },
-  "harman": {
-    "name": "Harman Target Curve",
-    "description": "Research-based preferred room response curve with controlled bass lift"
-  },
-  "vocal_presence": {
-    "name": "Vocal Presence",
-    "description": "Enhanced clarity for vocal content with midrange emphasis"
-  }
+  "success": true,
+  "target_curves": [
+    {
+      "key": "room_only",
+      "name": "Room Correction Only",
+      "description": "Focus correction on room modes (low frequencies up to 250Hz)",
+      "expert": false,
+      "curve": [[20, 0, [1, 0.5]], [250, 0]]
+    },
+    {
+      "key": "flat", 
+      "name": "Flat Response",
+      "description": "Flat frequency response across all frequencies",
+      "expert": false,
+      "curve": [[20, 0], [25000, 0]]
+    },
+    {
+      "key": "falling_slope",
+      "name": "Falling Slope", 
+      "description": "Gentle high-frequency roll-off for warmer sound",
+      "expert": false,
+      "curve": [[20, 0, [1, 0.3]], [100, 0, [1, 0.6]], [200, 0, [0.9, 0.7]], [500, 0, [0.9, 0.5]], [1000, 0, [0.5, 0.3]], [10000, -3, 0.1], [25000, -6]]
+    },
+    {
+      "key": "weighted_flat",
+      "name": "Weighted Flat",
+      "description": "Flat response with frequency-dependent correction weights", 
+      "expert": true,
+      "curve": [[20, 0, [1, 0.3]], [100, 0, [1, 0.6]], [200, 0, [0.9, 0.7]], [500, 0, 0.6], [5000, 0, 0.4], [10000, 0, 0.1], [25000, 0]]
+    },
+    {
+      "key": "harman",
+      "name": "Harman Curve",
+      "description": "Harman research target curve for speakers",
+      "expert": true, 
+      "curve": [[20, -2, [0.8, 0.4]], [100, 0, [1, 0.7]], [200, 0, [1, 0.8]], [500, 0, [0.9, 0.7]], [1000, 0, [0.7, 0.5]], [3000, -1, [0.6, 0.4]], [10000, -3, [0.3, 0.2]], [20000, -5, [0.1, 0.1]]]
+    },
+    {
+      "key": "vocal_presence",
+      "name": "Vocal Presence", 
+      "description": "Enhanced midrange for vocal clarity",
+      "expert": true,
+      "curve": [[20, -2, [0.5, 0.3]], [100, -1, [0.7, 0.5]], [200, 0, [0.9, 0.7]], [500, 0, [1, 0.8]], [1000, 1, [1, 0.9]], [3000, 2, [1, 0.8]], [5000, 0, [0.8, 0.6]], [10000, -2, [0.4, 0.3]], [20000, -4, [0.2, 0.1]]]
+    }
+  ]
 }
 ```
 
