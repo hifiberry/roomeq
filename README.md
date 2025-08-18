@@ -13,12 +13,12 @@ A comprehensive audio processing system for acoustic measurement, room correctio
 
 ## Key Capabilities
 
-🎯 **FFT Analysis** - Logarithmic frequency bucketing optimized for audio analysis  
-📊 **SPL Measurement** - Calibrated microphone integration with automatic sensitivity detection  
-🔊 **Test Signals** - Sine sweeps with flat frequency response and calibrated white noise  
-🌐 **REST API** - Complete web API for automation and integration  
-🎛️ **Real-time Control** - Live monitoring and continuous measurement capabilities  
-✅ **Validated Accuracy** - Results verified against industry standards  
+ - **FFT Analysis** - Logarithmic frequency bucketing optimized for audio analysis  
+ - **SPL Measurement** - Calibrated microphone integration with automatic sensitivity detection  
+ - **Test Signals** - Sine sweeps with flat frequency response and calibrated white noise  
+ - **REST API** - Complete web API for automation and integration  
+ - **Real-time Control** - Live monitoring and continuous measurement capabilities  
+ - **Validated Accuracy** - Results verified against industry standards  
 
 ## Quick Start
 
