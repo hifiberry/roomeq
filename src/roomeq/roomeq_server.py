@@ -1098,11 +1098,16 @@ def eq_optimize_start():
         optimizer_preset = data.get('optimizer_preset', 'default')
         filter_count = int(data.get('filter_count', 8))
         sample_rate = float(data.get('sample_rate', 48000))
+        intermediate_results_interval = int(data.get('intermediate_results_interval', 0))
         recording_id = data.get('recording_id')
         
         # Validate filter count
         if not (1 <= filter_count <= 20):
             abort(400, "filter_count must be between 1 and 20")
+        
+        # Validate intermediate results interval
+        if intermediate_results_interval < 0:
+            abort(400, "intermediate_results_interval must be >= 0")
         
         # Get frequency response data
         frequencies = None
@@ -1170,7 +1175,8 @@ def eq_optimize_start():
             target_curve=target_curve,
             optimizer_preset=optimizer_preset,
             filter_count=filter_count,
-            sample_rate=sample_rate
+            sample_rate=sample_rate,
+            intermediate_results_interval=intermediate_results_interval
         )
         
         return jsonify({
@@ -1181,7 +1187,8 @@ def eq_optimize_start():
                 "target_curve": target_curve,
                 "optimizer_preset": optimizer_preset,
                 "filter_count": filter_count,
-                "sample_rate": sample_rate
+                "sample_rate": sample_rate,
+                "intermediate_results_interval": intermediate_results_interval
             }
         })
         
@@ -1238,9 +1245,24 @@ def eq_optimize_result(optimization_id: str):
         if result is None:
             abort(404, f"Optimization result {optimization_id} not found")
         
-        # Convert dataclass to dict for JSON serialization
+        # Convert dataclass to dict for JSON serialization with special handling for nested results
         from dataclasses import asdict
         result_dict = asdict(result)
+        
+        # Handle intermediate_results serialization (nested OptimizationResult objects)
+        if result_dict.get('intermediate_results'):
+            intermediate_serialized = []
+            for intermediate in result_dict['intermediate_results']:
+                # Extract key fields from intermediate results for cleaner API response
+                intermediate_clean = {
+                    'step': len(intermediate.get('filters', [])),
+                    'filters': intermediate.get('filters', []),
+                    'improvement_db': intermediate.get('improvement_db', 0.0),
+                    'rms_error': intermediate.get('final_error', 0.0),
+                    'processing_time': intermediate.get('processing_time', 0.0)
+                }
+                intermediate_serialized.append(intermediate_clean)
+            result_dict['intermediate_results'] = intermediate_serialized
         
         return jsonify({
             "success": True,

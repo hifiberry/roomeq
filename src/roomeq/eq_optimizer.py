@@ -72,6 +72,7 @@ class OptimizationResult:
     original_response: List[float]
     target_response: List[float]
     corrected_response: List[float]
+    intermediate_results: List['OptimizationResult'] = None
     error_message: Optional[str] = None
 
 
@@ -312,7 +313,8 @@ class RoomEQOptimizer:
     
     def optimize(self, frequencies: List[float], magnitudes: List[float],
                 target_curve: str = "weighted_flat", optimizer_preset: str = "default",
-                filter_count: int = 8, sample_rate: float = 48000) -> OptimizationResult:
+                filter_count: int = 8, sample_rate: float = 48000, 
+                intermediate_results_interval: int = 0) -> OptimizationResult:
         """
         Optimize EQ filters for the given frequency response.
         
@@ -323,6 +325,7 @@ class RoomEQOptimizer:
             optimizer_preset: Optimizer preset name from eq_presets
             filter_count: Number of EQ filters to generate
             sample_rate: Audio sample rate
+            intermediate_results_interval: Return intermediate results every n steps (0=disabled)
             
         Returns:
             OptimizationResult with complete optimization data
@@ -374,7 +377,7 @@ class RoomEQOptimizer:
             # Find usable range
             max_fails = 2 if len(frequencies) >= 64 else 1
             low_idx, high_idx, f_low, f_high = find_usable_range(
-                freq_array, normalized_mag, maxfails=max_fails
+                freq_array, normalized_mag, max_fails=max_fails
             )
             
             # Step 3: Generate target curve
@@ -427,6 +430,7 @@ class RoomEQOptimizer:
                 current_response = current_response + np.array(hp_response)
             
             # Step 5: Optimize peaking EQ filters
+            intermediate_results = []
             for filter_num in range(filter_count):
                 if self.is_cancelled:
                     raise RuntimeError("Optimization cancelled")
@@ -485,6 +489,48 @@ class RoomEQOptimizer:
                     current_error=new_error,
                     best_filter=best_filter.to_dict()
                 ))
+                
+                # Check if we should return intermediate results
+                if (intermediate_results_interval > 0 and 
+                    (filter_num + 1) % intermediate_results_interval == 0 and 
+                    filter_num + 1 < filter_count):
+                    
+                    # Calculate current total response with all filters applied so far
+                    current_total_response, _ = filter_cascade_response(opt_frequencies.tolist(), filters, sample_rate)
+                    current_corrected = opt_magnitudes + np.array(current_total_response)
+                    current_error = calculate_rms_error(current_corrected, target_response, target_weights)
+                    current_improvement = initial_error - current_error
+                    
+                    # Create intermediate result
+                    intermediate_result = OptimizationResult(
+                        optimization_id=self.optimization_id + f"_step_{filter_num + 1}",
+                        success=True,
+                        filters=[f.to_dict() for f in filters],
+                        final_error=current_error,
+                        original_error=initial_error,
+                        improvement_db=current_improvement,
+                        frequency_range=(f_low, f_high),
+                        target_curve=target_curve,
+                        optimizer_preset=optimizer_preset,
+                        processing_time=time.time() - start_time,
+                        steps=self.progress_reporter.steps.copy(),
+                        frequencies=opt_frequencies.tolist(),
+                        original_response=opt_magnitudes.tolist(),
+                        target_response=target_response,
+                        corrected_response=current_corrected.tolist()
+                    )
+                    
+                    # Store intermediate result
+                    intermediate_results.append(intermediate_result)
+                    
+                    # Report intermediate result via callback
+                    self.progress_reporter.report_step(OptimizationStep(
+                        step_number=step_num + 200,  # Intermediate result step
+                        step_type="intermediate_result",
+                        message=f"Intermediate result after {filter_num + 1} filters: {current_improvement:.2f} dB improvement",
+                        progress_percent=progress + (60.0 / filter_count * 0.8),
+                        current_error=current_error
+                    ))
             
             # Step 6: Generate final results
             if self.is_cancelled:
@@ -530,7 +576,8 @@ class RoomEQOptimizer:
                 frequencies=opt_frequencies.tolist(),
                 original_response=opt_magnitudes.tolist(),
                 target_response=target_response,
-                corrected_response=final_corrected.tolist()
+                corrected_response=final_corrected.tolist(),
+                intermediate_results=intermediate_results if intermediate_results else None
             )
             
             return result
@@ -564,6 +611,7 @@ class RoomEQOptimizer:
                 original_response=[],
                 target_response=[],
                 corrected_response=[],
+                intermediate_results=None,
                 error_message=error_msg
             )
 
@@ -576,9 +624,13 @@ _optimization_results: Dict[str, OptimizationResult] = {}
 def start_optimization(frequencies: List[float], magnitudes: List[float],
                       target_curve: str = "weighted_flat", optimizer_preset: str = "default", 
                       filter_count: int = 8, sample_rate: float = 48000,
+                      intermediate_results_interval: int = 0,
                       progress_callback: Optional[Callable[[OptimizationStep], None]] = None) -> str:
     """
     Start an EQ optimization in a background thread.
+    
+    Args:
+        intermediate_results_interval: Return intermediate results every n filters (0=disabled)
     
     Returns:
         optimization_id: Unique ID for tracking the optimization
@@ -592,7 +644,7 @@ def start_optimization(frequencies: List[float], magnitudes: List[float],
         try:
             result = optimizer.optimize(
                 frequencies, magnitudes, target_curve, optimizer_preset,
-                filter_count, sample_rate
+                filter_count, sample_rate, intermediate_results_interval
             )
             _optimization_results[optimization_id] = result
         finally:

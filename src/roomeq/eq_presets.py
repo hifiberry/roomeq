@@ -71,31 +71,29 @@ OPTIMIZER_PRESETS: Dict[str, Dict[str, Any]] = {
 # Target curve definitions
 # Format: [[frequency, target_db, (positive_weight, negative_weight, cutoff)], ...]
 # Weight can be a single number or tuple (pos_weight, neg_weight) or (pos_weight, neg_weight, cutoff)
-TARGET_CURVES: Dict[str, List[List[Union[float, Tuple]]]] = {
+TARGET_CURVES: Dict[str, Dict[str, Any]] = {
+    "room_only": {
+        "name": "Room Correction Only",
+        "description": "Focus correction on room modes (low frequencies up to 250Hz)",
+        "expert": False,
+        "curve": [
+            [20, 0, (1, 0.5)],
+            [250, 0]
+        ]
+    },
     "flat": {
         "name": "Flat Response",
         "description": "Flat frequency response across all frequencies",
+        "expert": False,
         "curve": [
             [20, 0],
-            [25000, 0]
-        ]
-    },
-    "weighted_flat": {
-        "name": "Weighted Flat",
-        "description": "Flat response with frequency-dependent correction weights",
-        "curve": [
-            [20, 0, (1, 0.3)],
-            [100, 0, (1, 0.6)],
-            [200, 0, (0.9, 0.7)],
-            [500, 0, 0.6],
-            [5000, 0, 0.4],
-            [10000, 0, 0.1],
             [25000, 0]
         ]
     },
     "falling_slope": {
         "name": "Falling Slope",
         "description": "Gentle high-frequency roll-off for warmer sound",
+        "expert": False,
         "curve": [
             [20, 0, (1, 0.3)],
             [100, 0, (1, 0.6)],
@@ -106,17 +104,24 @@ TARGET_CURVES: Dict[str, List[List[Union[float, Tuple]]]] = {
             [25000, -6]
         ]
     },
-    "room_only": {
-        "name": "Room Correction Only",
-        "description": "Focus correction on room modes (low frequencies)",
+    "weighted_flat": {
+        "name": "Weighted Flat",
+        "description": "Flat response with frequency-dependent correction weights",
+        "expert": True,
         "curve": [
-            [20, 0, (1, 0.5)],
-            [250, 0]
+            [20, 0, (1, 0.3)],
+            [100, 0, (1, 0.6)],
+            [200, 0, (0.9, 0.7)],
+            [500, 0, 0.6],
+            [5000, 0, 0.4],
+            [10000, 0, 0.1],
+            [25000, 0]
         ]
     },
     "harman": {
         "name": "Harman Curve",
         "description": "Harman research target curve for speakers",
+        "expert": True,
         "curve": [
             [20, -2, (0.8, 0.4)],
             [100, 0, (1, 0.7)],
@@ -131,6 +136,7 @@ TARGET_CURVES: Dict[str, List[List[Union[float, Tuple]]]] = {
     "vocal_presence": {
         "name": "Vocal Presence",
         "description": "Enhanced midrange for vocal clarity",
+        "expert": True,
         "curve": [
             [20, -2, (0.5, 0.3)],
             [100, -1, (0.7, 0.5)],

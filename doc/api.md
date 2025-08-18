@@ -795,6 +795,7 @@ Start EQ optimization from recording or FFT data with real-time progress reporti
 - `target_curve` (string): Target response curve name (see `/eq/presets/targets`)
 - `optimizer_preset` (string): Optimization style (see `/eq/presets/optimizers`)
 - `filter_count` (integer, optional): Number of EQ filters to generate (1-20, default: 8)
+- `intermediate_results_interval` (integer, optional): Return intermediate results every n filters (0=disabled, default: 0)
 - `window` (string, optional): FFT window function for recording analysis
 - `points_per_octave` (integer, optional): Frequency resolution (1-100, default: 12)
 - `sample_rate` (integer, optional): Audio sample rate for FFT data (default: 48000)
@@ -820,6 +821,17 @@ curl -X POST http://localhost:10315/eq/optimize/start \
     "target_curve": "harman",
     "optimizer_preset": "smooth", 
     "filter_count": 6
+  }'
+
+# Start optimization with intermediate results every 2 filters
+curl -X POST http://localhost:10315/eq/optimize/start \
+  -H "Content-Type: application/json" \
+  -d '{
+    "recording_id": "rec_20250818_143015_abc123",
+    "target_curve": "weighted_flat",
+    "optimizer_preset": "default",
+    "filter_count": 8,
+    "intermediate_results_interval": 2
   }'
 ```
 
@@ -966,8 +978,63 @@ curl -X GET http://localhost:10315/eq/optimize/result/opt_20250818_143025_xyz789
     "corrected_response": [-0.8, -0.5, -0.2, 0.1, 0.3, 0.2, -0.1, -0.3, -0.1, 0.2, 0.4, 0.1, -0.2, -0.4],
     "target_response": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
   },
+  "intermediate_results": [
+    {
+      "step": 2,
+      "filters": [
+        {
+          "filter_type": "high_pass",
+          "frequency": 60.0,
+          "q": 0.5,
+          "gain_db": 0.0
+        },
+        {
+          "filter_type": "peaking_eq",
+          "frequency": 120.0,
+          "q": 1.5,
+          "gain_db": 4.2
+        }
+      ],
+      "improvement_db": 3.2,
+      "rms_error": 5.1
+    },
+    {
+      "step": 4,
+      "filters": [
+        {
+          "filter_type": "high_pass",
+          "frequency": 60.0,
+          "q": 0.5,
+          "gain_db": 0.0
+        },
+        {
+          "filter_type": "peaking_eq",
+          "frequency": 120.0,
+          "q": 1.5,
+          "gain_db": 4.2
+        },
+        {
+          "filter_type": "peaking_eq",
+          "frequency": 315.0,
+          "q": 2.1,
+          "gain_db": -2.8
+        },
+        {
+          "filter_type": "peaking_eq",
+          "frequency": 2500.0,
+          "q": 2.8,
+          "gain_db": -3.8
+        }
+      ],
+      "improvement_db": 6.8,
+      "rms_error": 3.5
+    }
+  ],
   "timestamp": "2025-08-18T14:30:40.123456"
 }
+```
+
+**Note:** The `intermediate_results` array is only included when `intermediate_results_interval > 0` was specified during optimization start. Each intermediate result shows the optimization state after every n filters, allowing for progress monitoring and early termination if desired performance is reached.
 ```
 
 ### EQ Optimization Usage Examples
