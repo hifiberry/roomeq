@@ -67,7 +67,7 @@ CORS(app)  # Enable CORS for all routes
 def after_request(response):
     """Add headers to all responses for better proxy compatibility."""
     response.headers["connection"] = "close"
-    response.headers["server"] = "roomeq-api/0.3.0"
+    response.headers["server"] = "roomeq-api/0.5.0"
     return response
 
 # Add request logging middleware
@@ -1251,7 +1251,7 @@ def root():
     """Root endpoint with comprehensive API information."""
     return jsonify({
         "message": "RoomEQ Audio Processing API",
-        "version": "0.4.0",
+        "version": "0.5.0",
         "framework": "Flask",
         "description": "REST API for microphone detection, SPL measurement, audio signal generation, recording, FFT analysis, and automatic room EQ optimization with real-time progress reporting",
         "features": [
@@ -1733,6 +1733,9 @@ def root():
             "playback_monitoring": "Real-time status tracking with automatic timeout",
             "fft_analysis": "FFT with windowing functions, normalization, and logarithmic frequency summarization",
             "frequency_summarization": "Logarithmic frequency buckets with configurable points per octave (1-100)",
+            "eq_optimization": "Scipy-based least squares optimization with multiple target curves and real-time progress reporting",
+            "eq_filters": "Biquad parametric EQ filters with peaking, high-pass, low-shelf, and high-shelf types",
+            "optimization_algorithms": "Advanced curve fitting with psychoacoustic smoothing and frequency-weighted error minimization",
             "cors_support": "Cross-origin requests enabled for web applications"
         },
         "server_info": {
