@@ -34,6 +34,11 @@ from .recording import (
 from .microphone import MicrophoneDetector, detect_microphones
 from .analysis import measure_spl
 from .signal_generator import SignalGenerator
+from .eq_optimizer import (
+    start_optimization, get_optimization_status, cancel_optimization,
+    get_optimization_result
+)
+from .eq_presets import list_target_curves, list_optimizer_presets
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -1041,14 +1046,214 @@ def get_noise_status():
     return jsonify(status)
 
 
+# EQ Optimizer endpoints
+@app.route("/eq/presets/targets", methods=["GET"])
+def eq_targets():
+    """Get available EQ target curves."""
+    try:
+        curves = list_target_curves()
+        return jsonify({
+            "success": True,
+            "target_curves": curves,
+            "count": len(curves)
+        })
+    except Exception as e:
+        logger.error(f"Error getting target curves: {e}")
+        abort(500, f"Failed to get target curves: {str(e)}")
+
+
+@app.route("/eq/presets/optimizers", methods=["GET"])
+def eq_optimizers():
+    """Get available EQ optimizer presets."""
+    try:
+        presets = list_optimizer_presets()
+        return jsonify({
+            "success": True,
+            "optimizer_presets": presets,
+            "count": len(presets)
+        })
+    except Exception as e:
+        logger.error(f"Error getting optimizer presets: {e}")
+        abort(500, f"Failed to get optimizer presets: {str(e)}")
+
+
+@app.route("/eq/optimize/start", methods=["POST"])
+def eq_optimize_start():
+    """Start EQ optimization from FFT data or recording."""
+    try:
+        # Parse request data
+        if request.is_json:
+            data = request.get_json()
+        else:
+            data = {}
+        
+        # Get parameters
+        target_curve = data.get('target_curve', 'weighted_flat')
+        optimizer_preset = data.get('optimizer_preset', 'default')
+        filter_count = int(data.get('filter_count', 8))
+        sample_rate = float(data.get('sample_rate', 48000))
+        recording_id = data.get('recording_id')
+        
+        # Validate filter count
+        if not (1 <= filter_count <= 20):
+            abort(400, "filter_count must be between 1 and 20")
+        
+        # Get frequency response data
+        frequencies = None
+        magnitudes = None
+        
+        if recording_id:
+            # Use recording for optimization
+            try:
+                # Get recording file path
+                recording_info = get_recording_status(recording_id)
+                if recording_info['status'] != 'completed':
+                    abort(400, f"Recording {recording_id} is not completed")
+                
+                # Analyze recording to get FFT data
+                file_path = recording_info.get('file_path')
+                if not file_path or not os.path.exists(file_path):
+                    abort(404, f"Recording file not found for {recording_id}")
+                
+                # Use default FFT analysis parameters
+                window_type = data.get('window', 'hann')
+                normalize = data.get('normalize', 1000.0)
+                points_per_octave = data.get('points_per_octave', 12)
+                
+                result = analyze_wav_file(
+                    file_path, window_type, None, None, None, 
+                    normalize, points_per_octave, None
+                )
+                
+                # Extract frequency response from log summary if available
+                if 'log_frequency_summary' in result and 'error' not in result['log_frequency_summary']:
+                    log_data = result['log_frequency_summary']
+                    frequencies = log_data['frequencies']
+                    magnitudes = log_data['magnitudes']
+                else:
+                    # Fallback to full resolution data
+                    frequencies = result['frequencies']
+                    magnitudes = result['magnitudes']
+                
+            except Exception as e:
+                logger.error(f"Error analyzing recording {recording_id}: {e}")
+                abort(500, f"Failed to analyze recording: {str(e)}")
+        
+        elif 'frequencies' in data and 'magnitudes' in data:
+            # Use provided FFT data
+            frequencies = data['frequencies']
+            magnitudes = data['magnitudes']
+            
+            if len(frequencies) != len(magnitudes):
+                abort(400, "frequencies and magnitudes arrays must have the same length")
+                
+        else:
+            abort(400, "Either recording_id or frequencies/magnitudes data must be provided")
+        
+        # Validate frequency data
+        if not frequencies or not magnitudes:
+            abort(400, "No valid frequency response data found")
+        
+        if len(frequencies) < 10:
+            abort(400, "Insufficient frequency data points for optimization")
+        
+        # Start optimization
+        optimization_id = start_optimization(
+            frequencies=frequencies,
+            magnitudes=magnitudes,
+            target_curve=target_curve,
+            optimizer_preset=optimizer_preset,
+            filter_count=filter_count,
+            sample_rate=sample_rate
+        )
+        
+        return jsonify({
+            "success": True,
+            "optimization_id": optimization_id,
+            "message": f"EQ optimization started with {len(frequencies)} frequency points",
+            "parameters": {
+                "target_curve": target_curve,
+                "optimizer_preset": optimizer_preset,
+                "filter_count": filter_count,
+                "sample_rate": sample_rate
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error starting EQ optimization: {e}")
+        abort(500, str(e))
+
+
+@app.route("/eq/optimize/status/<optimization_id>", methods=["GET"])
+def eq_optimize_status(optimization_id: str):
+    """Get status of running or completed optimization."""
+    try:
+        status = get_optimization_status(optimization_id)
+        
+        if status['status'] == 'not_found':
+            abort(404, f"Optimization {optimization_id} not found")
+        
+        return jsonify({
+            "success": True,
+            **status
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting optimization status: {e}")
+        abort(500, str(e))
+
+
+@app.route("/eq/optimize/cancel/<optimization_id>", methods=["POST"])
+def eq_optimize_cancel(optimization_id: str):
+    """Cancel a running optimization."""
+    try:
+        cancelled = cancel_optimization(optimization_id)
+        
+        if not cancelled:
+            abort(404, f"Optimization {optimization_id} not found or not running")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Optimization {optimization_id} cancelled",
+            "optimization_id": optimization_id
+        })
+        
+    except Exception as e:
+        logger.error(f"Error cancelling optimization: {e}")
+        abort(500, str(e))
+
+
+@app.route("/eq/optimize/result/<optimization_id>", methods=["GET"])
+def eq_optimize_result(optimization_id: str):
+    """Get completed optimization result."""
+    try:
+        result = get_optimization_result(optimization_id)
+        
+        if result is None:
+            abort(404, f"Optimization result {optimization_id} not found")
+        
+        # Convert dataclass to dict for JSON serialization
+        from dataclasses import asdict
+        result_dict = asdict(result)
+        
+        return jsonify({
+            "success": True,
+            "result": result_dict
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting optimization result: {e}")
+        abort(500, str(e))
+
+
 @app.route("/", methods=["GET"])
 def root():
     """Root endpoint with comprehensive API information."""
     return jsonify({
         "message": "RoomEQ Audio Processing API",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "framework": "Flask",
-        "description": "REST API for microphone detection, SPL measurement, audio signal generation, recording, and FFT analysis with logarithmic frequency summarization for acoustic measurements and room equalization",
+        "description": "REST API for microphone detection, SPL measurement, audio signal generation, recording, FFT analysis, and automatic room EQ optimization with real-time progress reporting",
         "features": [
             "Automatic microphone detection with sensitivity and gain information",
             "Real-time SPL (Sound Pressure Level) measurement",
@@ -1056,6 +1261,9 @@ def root():
             "Logarithmic sine sweep generation with multiple repeat support",
             "Background audio recording to WAV files with secure file management",
             "FFT spectral analysis with dB output, frequency normalization, and logarithmic frequency summarization",
+            "Automatic room EQ optimization with multiple target curves and optimizer presets",
+            "Real-time optimization progress reporting with step-by-step updates",
+            "Biquad filter generation for parametric EQ implementation",
             "Windowing functions support (Hann, Hamming, Blackman)",
             "Frequency band analysis and automatic peak detection",
             "Real-time playback and recording management",
@@ -1095,6 +1303,14 @@ def root():
             "fft_analysis": {
                 "/audio/analyze/fft": "Analyze WAV file with FFT (by filename or filepath)",
                 "/audio/analyze/fft-recording/<recording_id>": "Analyze recorded file with FFT by recording ID"
+            },
+            "eq_optimization": {
+                "/eq/presets/targets": "List available target response curves",
+                "/eq/presets/optimizers": "List available optimizer configurations",
+                "/eq/optimize/start": "Start EQ optimization from recording or FFT data",
+                "/eq/optimize/status/<optimization_id>": "Get real-time optimization progress",
+                "/eq/optimize/cancel/<optimization_id>": "Cancel running optimization",
+                "/eq/optimize/result/<optimization_id>": "Get optimization results and EQ filters"
             }
         },
         "usage_examples": {
@@ -1226,6 +1442,40 @@ def root():
             "playback_control": {
                 "stop": "curl -X POST http://localhost:10315/audio/noise/stop",
                 "status": "curl -X GET http://localhost:10315/audio/noise/status"
+            },
+            "eq_optimization": {
+                "description": "Automatic room EQ optimization with real-time progress reporting",
+                "list_targets": "curl -X GET http://localhost:10315/eq/presets/targets",
+                "list_optimizers": "curl -X GET http://localhost:10315/eq/presets/optimizers",
+                "start_from_recording": {
+                    "method": "POST",
+                    "url": "/eq/optimize/start",
+                    "example": "curl -X POST http://localhost:10315/eq/optimize/start -H 'Content-Type: application/json' -d '{\"recording_id\":\"abc12345\",\"target_curve\":\"weighted_flat\",\"optimizer_preset\":\"default\",\"filter_count\":8}'",
+                    "parameters": {
+                        "recording_id": "ID of completed recording to analyze",
+                        "target_curve": "Target response curve (weighted_flat, flat, falling_slope, room_only, harman, vocal_presence)",
+                        "optimizer_preset": "Optimization style (default, smooth, aggressive, verysmooth, precise)",
+                        "filter_count": "Number of EQ filters to generate (1-20, default: 8)",
+                        "window": "FFT window function for analysis (hann, hamming, blackman)",
+                        "points_per_octave": "Frequency resolution for optimization (1-100, default: 12)"
+                    }
+                },
+                "start_from_fft": {
+                    "method": "POST", 
+                    "url": "/eq/optimize/start",
+                    "example": "curl -X POST http://localhost:10315/eq/optimize/start -H 'Content-Type: application/json' -d '{\"frequencies\":[20,25,31.5,...],\"magnitudes\":[-5.2,-3.1,-2.8,...],\"target_curve\":\"harman\",\"filter_count\":6}'",
+                    "parameters": {
+                        "frequencies": "Array of frequency values in Hz",
+                        "magnitudes": "Array of magnitude values in dB (same length as frequencies)",
+                        "target_curve": "Target response curve name",
+                        "optimizer_preset": "Optimization style name",
+                        "filter_count": "Number of filters to generate",
+                        "sample_rate": "Audio sample rate (default: 48000)"
+                    }
+                },
+                "check_status": "curl -X GET http://localhost:10315/eq/optimize/status/optimization_id_12345",
+                "cancel": "curl -X POST http://localhost:10315/eq/optimize/cancel/optimization_id_12345",
+                "get_result": "curl -X GET http://localhost:10315/eq/optimize/result/optimization_id_12345"
             }
         },
         "response_formats": {
@@ -1359,6 +1609,118 @@ def root():
                         "normalization": {"applied": false}
                     },
                     "timestamp": "2025-08-15T12:25:00.123456"
+                }
+            },
+            "eq_optimization": {
+                "target_curves": {
+                    "description": "Available target response curves for EQ optimization",
+                    "example": {
+                        "flat": {
+                            "name": "Flat Response",
+                            "description": "Perfectly flat frequency response (0 dB across all frequencies)"
+                        },
+                        "weighted_flat": {
+                            "name": "Weighted Flat",
+                            "description": "Flat response with psychoacoustic weighting"
+                        },
+                        "harman": {
+                            "name": "Harman Target Curve",
+                            "description": "Research-based preferred room response curve"
+                        }
+                    }
+                },
+                "optimizer_presets": {
+                    "description": "Available optimizer configurations with different trade-offs",
+                    "example": {
+                        "default": {
+                            "name": "Default",
+                            "description": "Balanced optimization with moderate smoothing",
+                            "smoothing_factor": 1.0,
+                            "max_gain_db": 12.0,
+                            "min_q": 0.5,
+                            "max_q": 10.0
+                        },
+                        "smooth": {
+                            "name": "Smooth",
+                            "description": "Gentle corrections with increased smoothing",
+                            "smoothing_factor": 2.0,
+                            "max_gain_db": 8.0
+                        },
+                        "aggressive": {
+                            "name": "Aggressive",
+                            "description": "Strong corrections with minimal smoothing",
+                            "max_gain_db": 15.0,
+                            "smoothing_factor": 0.5
+                        }
+                    }
+                },
+                "optimization_progress": {
+                    "description": "Real-time optimization progress with detailed steps",
+                    "example": {
+                        "optimization_id": "opt_abc12345",
+                        "status": "optimizing",
+                        "progress": 65.0,
+                        "current_step": "Optimizing filter 5/8",
+                        "steps_completed": 13,
+                        "total_steps": 20,
+                        "elapsed_time": 12.5,
+                        "estimated_remaining": 7.2,
+                        "current_filter": {
+                            "index": 5,
+                            "frequency": 2500.0,
+                            "gain_db": -3.8,
+                            "q": 2.1,
+                            "filter_type": "peaking_eq"
+                        }
+                    }
+                },
+                "optimization_result": {
+                    "description": "Complete EQ optimization results with generated filters",
+                    "example": {
+                        "optimization_id": "opt_abc12345",
+                        "status": "completed",
+                        "success": true,
+                        "target_curve": "weighted_flat",
+                        "optimizer_preset": "default",
+                        "processing_time": 18.7,
+                        "final_rms_error": 2.1,
+                        "improvement_db": 8.3,
+                        "filters": [
+                            {
+                                "index": 1,
+                                "filter_type": "peaking_eq",
+                                "frequency": 120.0,
+                                "q": 1.5,
+                                "gain_db": 4.2,
+                                "description": "Peaking EQ 120Hz 4.2dB",
+                                "text_format": "eq:120:1.5:4.2",
+                                "coefficients": {
+                                    "b": [1.051, -1.894, 0.851],
+                                    "a": [1.000, -1.894, 0.902]
+                                }
+                            },
+                            {
+                                "index": 2,
+                                "filter_type": "peaking_eq",
+                                "frequency": 2500.0,
+                                "q": 2.8,
+                                "gain_db": -3.8,
+                                "description": "Peaking EQ 2500Hz -3.8dB",
+                                "text_format": "eq:2500:2.8:-3.8",
+                                "coefficients": {
+                                    "b": [0.932, -1.687, 0.756],
+                                    "a": [1.000, -1.687, 0.688]
+                                }
+                            }
+                        ],
+                        "frequency_response": {
+                            "frequencies": [20, 25, 31.5, 40, "..."],
+                            "original_response": [-8.2, -7.1, -5.9, -4.8, "..."],
+                            "corrected_response": [-0.8, -0.5, -0.2, 0.1, "..."],
+                            "target_response": [0.0, 0.0, 0.0, 0.0, "..."]
+                        },
+                        "timestamp": "2025-08-18T14:30:15.123456"
+                    }
                 }
             }
         },
