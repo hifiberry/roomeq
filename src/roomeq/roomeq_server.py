@@ -147,7 +147,7 @@ def validate_float_param(param_name: str, value: str, min_val: float = None, max
 def get_version():
     """Get API version information."""
     return jsonify({
-        "version": "0.5.0",
+        "version": "0.6.0",
         "api_name": "RoomEQ Audio Processing API",
         "features": [
             "Microphone detection with sensitivity and gain",
