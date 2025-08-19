@@ -144,7 +144,7 @@ class RustOptimizer:
     
     def _run_optimizer_streaming(self, job_file: str) -> Iterator[Dict[str, Any]]:
         """Run the Rust optimizer with streaming output."""
-        cmd = [self.binary_path, "--progress", "--result", "--human-readable"]
+        cmd = [self.binary_path, "--progress", "--result", "--human-readable", "--frequency-response"]
         
         try:
             # Start process with streaming I/O
