@@ -1004,6 +1004,17 @@ The `frequency_response` events contain the calculated response of the current f
   "type": "frequency_response",
   "optimization_id": "abc12345", 
   "step": 1,
+  "current_filter_set": [
+    {
+      "filter_type": "peaking_eq",
+      "frequency": 120.0,
+      "q": 1.5,
+      "gain_db": 4.2,
+      "description": "Peaking Eq 120Hz +4.2dB",
+      "text_format": "eq:120.0:1.500:4.20"
+    }
+  ],
+  "total_filters": 1,
   "frequency_response": {
     "frequencies": [20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000, 20000],
     "magnitude_db": [0.1, 0.2, 0.4, 0.8, 1.2, 1.8, 2.5, 3.2, 4.1, 3.8, 3.2, 2.1, 1.2, 0.5, -0.2, -0.8, -1.5, -2.1, -2.8, -3.2, -3.8, -2.9, -1.8, -0.5, 0.8, 1.5, 2.2, 1.8, 1.2, 0.5],
@@ -1014,6 +1025,8 @@ The `frequency_response` events contain the calculated response of the current f
 ```
 
 **Important Note:** The frequency response always uses the exact same frequencies as provided in the input measurement data. If your input has 10 frequency points, the frequency response will have exactly 10 matching points. If your input has 31 points (like the curl example), the frequency response will have exactly 31 matching points. This ensures perfect alignment between the original measurement and the corrected response for accurate comparison.
+
+The `frequency_response` events also include the `current_filter_set` and `total_filters` fields, showing which filters were applied to generate this response. This provides complete context about the optimization state at each step.
 
 **Optimization Result Structure:**
 ```json

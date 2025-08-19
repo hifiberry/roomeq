@@ -177,7 +177,64 @@ class RustOptimizer:
                 if not line:
                     continue
                 
-                # Parse different types of output
+                # Try to parse as JSON first (new combined format)
+                try:
+                    data = json.loads(line)
+                    
+                    # Check if it's a step with optional frequency response
+                    if "step" in data and "filters" in data:
+                        # Update our filter list to match the step data
+                        if len(data["filters"]) > len(filters):
+                            # New filter added
+                            new_filter = data["filters"][-1]  # Get the newest filter
+                            filters = data["filters"].copy()  # Update our filter list
+                            
+                            filter_event = {
+                                "type": "filter_added", 
+                                "optimization_id": optimization_id,
+                                "step": step_number,
+                                "message": data.get("message", f"Added filter at step {data['step']}"),
+                                "filter": new_filter,
+                                "total_filters": len(filters),
+                                "current_filter_set": filters.copy(),
+                                "progress": data.get("progress_percent", 0.0),
+                                "timestamp": time.time()
+                            }
+                            
+                            # Add frequency response if included
+                            if "frequency_response" in data:
+                                filter_event["frequency_response"] = {
+                                    "frequencies": data["frequency_response"]["frequencies"],
+                                    "magnitude_db": data["frequency_response"]["magnitude_db"],
+                                    "phase_degrees": data["frequency_response"].get("phase_degrees", [])
+                                }
+                            
+                            yield filter_event
+                            step_number += 1
+                    
+                    # Check if it's a standalone frequency response (final result)
+                    elif data.get("event") == "frequency_response_final":
+                        yield {
+                            "type": "frequency_response",
+                            "optimization_id": optimization_id, 
+                            "step": -1,
+                            "message": "Final frequency response",
+                            "current_filter_set": data.get("current_filter_set", filters.copy()),
+                            "total_filters": len(data.get("current_filter_set", filters)),
+                            "frequency_response": {
+                                "frequencies": data["frequencies"],
+                                "magnitude_db": data["magnitude_db"], 
+                                "phase_degrees": data.get("phase_degrees", [])
+                            },
+                            "timestamp": time.time()
+                        }
+                    
+                    continue  # Successfully parsed as JSON, skip legacy parsing
+                    
+                except (json.JSONDecodeError, KeyError):
+                    # Not JSON or missing required fields, try legacy parsing
+                    pass
+                # Legacy parsing for non-JSON output
                 if line.startswith("Usable frequency range:"):
                     # Extract frequency range
                     parts = line.split()
@@ -249,6 +306,8 @@ class RustOptimizer:
                                 "optimization_id": optimization_id,
                                 "step": response_step,
                                 "message": f"Frequency response calculated after step {response_step + 1}",
+                                "current_filter_set": filters.copy(),  # Include current filter set
+                                "total_filters": len(filters),
                                 "frequency_response": {
                                     "frequencies": response_data["frequencies"],
                                     "magnitude_db": response_data["magnitude_db"],
