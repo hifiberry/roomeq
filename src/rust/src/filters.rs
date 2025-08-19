@@ -37,6 +37,13 @@ pub struct OptimizerPreset {
     pub mindb: f64,
     pub maxdb: f64,
     pub add_highpass: bool,
+    #[serde(default = "default_acceptable_error")]
+    pub acceptable_error: f64,
+}
+
+/// Default acceptable error is 1.0 dB
+fn default_acceptable_error() -> f64 {
+    1.0
 }
 
 /// Frequency response data
