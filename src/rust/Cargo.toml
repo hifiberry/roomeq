@@ -19,6 +19,7 @@ argmin-math = "0.3"
 num-complex = "0.4"
 log = "0.4"
 env_logger = "0.10"
+clap = { version = "4.0", features = ["derive"] }
 
 [profile.release]
 opt-level = 3
