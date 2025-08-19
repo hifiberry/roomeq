@@ -4,3 +4,40 @@ export PYBUILD_NAME=roomeq
 
 %:
 	dh $@ --with python3 --buildsystem=pybuild
+
+override_dh_auto_build:
+	# Build Python package
+	dh_auto_build
+	# Create temporary directory for Rust installation
+	mkdir -p $(CURDIR)/rust_temp
+	# Install latest Rust using rustup with explicit home directory
+	HOME=$(CURDIR)/rust_temp && \
+		export CARGO_HOME=$(CURDIR)/rust_temp/.cargo && \
+		export RUSTUP_HOME=$(CURDIR)/rust_temp/.rustup && \
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+	# Build Rust optimizer
+	HOME=$(CURDIR)/rust_temp && \
+		export PATH="$(CURDIR)/rust_temp/.cargo/bin:$$PATH" && \
+		export CARGO_HOME=$(CURDIR)/rust_temp/.cargo && \
+		export RUSTUP_HOME=$(CURDIR)/rust_temp/.rustup && \
+		cd src/rust && \
+		cargo build --release
+
+override_dh_auto_install:
+	# Install Python package
+	dh_auto_install
+	# Install Rust optimizer binary
+	install -D -m755 src/rust/target/release/roomeq-optimizer debian/roomeq/usr/bin/roomeq-optimizer
+
+override_dh_strip:
+	# Strip the Rust binary
+	strip --remove-section=.comment --remove-section=.note src/rust/target/release/roomeq-optimizer
+	dh_strip
+
+override_dh_auto_clean:
+	# Clean Python build
+	dh_auto_clean
+	# Clean Rust build
+	cd src/rust && cargo clean || true
+	# Clean temporary Rust installation
+	rm -rf $(CURDIR)/rust_temp || true
