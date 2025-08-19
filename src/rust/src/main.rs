@@ -6,12 +6,34 @@ use optimizer::*;
 use serde_json;
 use std::io::{self, Read};
 use log::info;
+use clap::Parser;
+
+/// High-performance RoomEQ optimizer for audio equalization
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Output progress steps during optimization
+    #[arg(long)]
+    progress: bool,
+
+    /// Output final result after optimization
+    #[arg(long)]
+    result: bool,
+
+    /// Output human-readable text instead of JSON
+    #[arg(long)]
+    human_readable: bool,
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logger
-    env_logger::init();
+    let args = Args::parse();
     
-    info!("RoomEQ Optimizer v0.6.0 starting...");
+    // Initialize logger only if human-readable output is requested
+    // Otherwise it would interfere with JSON output
+    if args.human_readable {
+        env_logger::init();
+        info!("RoomEQ Optimizer v0.6.0 starting...");
+    }
     
     // Read optimization job from stdin
     let mut stdin = io::stdin();
@@ -22,39 +44,74 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let job: OptimizationJob = match serde_json::from_str(&input.trim()) {
         Ok(job) => job,
         Err(e) => {
-            eprintln!("Error parsing input JSON: {}", e);
+            if args.human_readable {
+                eprintln!("Error parsing input JSON: {}", e);
+            } else {
+                let error_json = serde_json::json!({
+                    "type": "error",
+                    "message": format!("Error parsing input JSON: {}", e)
+                });
+                println!("{}", error_json);
+            }
             std::process::exit(1);
         }
     };
 
-    info!("Optimization job received:");
-    info!("  Measured curve: {} points", job.measured_curve.len());
-    info!("  Target curve: {}", job.target_curve.name);
-    info!("  Optimizer: {}", job.optimizer_params.name);
-    info!("  Filter count: {}", job.filter_count);
-    info!("  Sample rate: {}Hz", job.sample_rate);
+    if args.human_readable {
+        info!("Optimization job received:");
+        info!("  Measured curve: {} points", job.measured_curve.len());
+        info!("  Target curve: {}", job.target_curve.name);
+        info!("  Optimizer: {}", job.optimizer_params.name);
+        info!("  Filter count: {}", job.filter_count);
+        info!("  Sample rate: {}Hz", job.sample_rate);
+    }
 
-    // Create optimizer
-    let optimizer = RoomEQOptimizer::new(job.sample_rate);
+    // Create optimizer with output mode configuration
+    let mut optimizer = RoomEQOptimizer::new(job.sample_rate);
+    optimizer.set_output_mode(args.progress, args.human_readable);
 
-    // Run optimization (this will output steps to stdout during processing)
+    // Run optimization
     let result = optimizer.optimize(job);
 
-    // Output final result to stderr so it doesn't interfere with step output
-    eprintln!("Optimization completed:");
-    eprintln!("  Success: {}", result.success);
-    eprintln!("  Filters created: {}", result.filters.len());
-    eprintln!("  Original error: {:.2} dB RMS", result.original_error);
-    eprintln!("  Final error: {:.2} dB RMS", result.final_error);
-    eprintln!("  Improvement: {:.1} dB", result.improvement_db);
-    eprintln!("  Processing time: {} ms", result.processing_time_ms);
+    // Output final result if requested
+    if args.result {
+        if args.human_readable {
+            println!("\n=== OPTIMIZATION RESULTS ===");
+            println!("Success: {}", result.success);
+            println!("Filters created: {}", result.filters.len());
+            println!("Usable frequency range: {:.1} Hz - {:.1} Hz", result.usable_freq_low, result.usable_freq_high);
+            println!("Original error: {:.2} dB RMS", result.original_error);
+            println!("Final error: {:.2} dB RMS", result.final_error);
+            println!("Improvement: {:.1} dB", result.improvement_db);
+            println!("Processing time: {} ms", result.processing_time_ms);
+            
+            if !result.filters.is_empty() {
+                println!("\nFilters:");
+                for (i, filter) in result.filters.iter().enumerate() {
+                    println!("  {}: {}", i + 1, filter.as_text());
+                }
+            }
 
-    if let Some(ref error_msg) = result.error_message {
-        eprintln!("  Error: {}", error_msg);
+            if let Some(ref error_msg) = result.error_message {
+                println!("Error: {}", error_msg);
+                std::process::exit(1);
+            }
+        } else {
+            // Output JSON result
+            let result_json = serde_json::to_string(&result)?;
+            println!("{}", result_json);
+        }
+    }
+
+    // Exit with error code if optimization failed
+    if !result.success {
         std::process::exit(1);
     }
 
-    info!("Optimization complete");
+    if args.human_readable {
+        info!("Optimization complete");
+    }
+    
     Ok(())
 }
 

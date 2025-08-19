@@ -42,12 +42,16 @@ pub struct OptimizationResult {
     pub steps: Vec<OptimizationStep>,
     pub processing_time_ms: u64,
     pub error_message: Option<String>,
+    pub usable_freq_low: f64,
+    pub usable_freq_high: f64,
 }
 
 pub struct RoomEQOptimizer {
     sample_rate: f64,
     min_frequency: f64,
     max_frequency: f64,
+    output_progress: bool,
+    human_readable: bool,
 }
 
 impl RoomEQOptimizer {
@@ -56,7 +60,129 @@ impl RoomEQOptimizer {
             sample_rate,
             min_frequency: 20.0,
             max_frequency: 20000.0,
+            output_progress: true,  // Default to current behavior
+            human_readable: false,  // Default to JSON output
         }
+    }
+
+    /// Configure output mode for progress steps and format
+    pub fn set_output_mode(&mut self, output_progress: bool, human_readable: bool) {
+        self.output_progress = output_progress;
+        self.human_readable = human_readable;
+    }
+
+    /// Output an optimization step in the configured format
+    fn output_step(&self, step: &OptimizationStep) {
+        if self.human_readable {
+            println!("Step {}: {} (Error: {:.2} dB, Progress: {:.1}%)", 
+                     step.step, step.message, step.residual_error, step.progress_percent);
+            
+            if let Some(filter) = step.filters.last() {
+                println!("  Added: {}", filter.as_text());
+            }
+        } else {
+            // JSON output
+            if let Ok(json) = serde_json::to_string(step) {
+                println!("{}", json);
+            }
+        }
+    }
+
+    /// Generate frequency candidates for optimization
+    fn generate_frequency_candidates(&self, f_low: f64, f_high: f64, measured_frequencies: &[f64]) -> Vec<f64> {
+        let mut frequencies = Vec::new();
+        
+        // First, add frequencies from the measured curve
+        for &freq in measured_frequencies {
+            if freq >= f_low && freq <= f_high {
+                frequencies.push(freq);
+            }
+        }
+        
+        // Add interpolated frequencies between each pair of measured frequencies
+        for i in 0..measured_frequencies.len() - 1 {
+            let f1 = measured_frequencies[i];
+            let f2 = measured_frequencies[i + 1];
+            
+            // Only add if both frequencies are in usable range
+            if f1 >= f_low && f2 <= f_high && f1 < f2 {
+                // Add geometric mean between f1 and f2
+                let f_interp = (f1 * f2).sqrt();
+                if f_interp > f_low && f_interp < f_high {
+                    frequencies.push(f_interp);
+                }
+            }
+        }
+        
+        // Add 1/3 octave frequencies in the usable range
+        let mut freq = f_low;
+        let max_freq = f_high;
+        
+        while freq <= max_freq {
+            // Only add if not too close to existing frequencies
+            let mut too_close = false;
+            for &existing_freq in &frequencies {
+                if (freq / existing_freq).abs().log2().abs() < 0.15 { // Less than ~1/6 octave apart
+                    too_close = true;
+                    break;
+                }
+            }
+            
+            if !too_close {
+                frequencies.push(freq);
+            }
+            freq *= 2.0_f64.powf(1.0/3.0); // 1/3 octave steps
+        }
+        
+        // Sort and remove frequencies too close to f_low or f_high boundaries for PEQ
+        frequencies.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        
+        // Remove frequencies at the exact boundaries (reserve for high-pass only)
+        frequencies.retain(|&f| f > f_low * 1.05 && f < f_high * 0.95);
+        
+        // Ensure we have at least a few candidates
+        if frequencies.is_empty() {
+            let mid_freq = (f_low * f_high).sqrt();
+            frequencies.push(mid_freq);
+        }
+        
+        frequencies
+    }
+
+    /// Generate Q factor candidates
+    fn generate_q_candidates(&self, params: &OptimizerPreset) -> Vec<f64> {
+        let mut q_values = Vec::new();
+        
+        // Generate Q values from 0.5 to qmax in reasonable steps
+        let q_min = 0.5;
+        let q_max = params.qmax;
+        let q_steps = 10; // Number of Q steps
+        
+        for i in 0..=q_steps {
+            let t = i as f64 / q_steps as f64;
+            // Use exponential distribution for Q values (more resolution at lower Q)
+            let q = q_min * (q_max / q_min).powf(t);
+            q_values.push(q);
+        }
+        
+        q_values
+    }
+
+    /// Generate gain candidates in 0.5dB steps
+    fn generate_gain_candidates(&self, params: &OptimizerPreset) -> Vec<f64> {
+        let mut gains = Vec::new();
+        
+        let gain_min = params.mindb;
+        let gain_max = params.maxdb;
+        let step_size = 0.5; // 0.5dB steps as requested
+        
+        let mut gain = gain_min;
+        while gain <= gain_max {
+            gains.push(gain);
+            gain += step_size;
+        }
+        
+        gains
     }
 
     /// Generate target response from curve definition
@@ -104,6 +230,78 @@ impl RoomEQOptimizer {
         p1.target_db + t * (p2.target_db - p1.target_db)
     }
 
+    /// Interpolate weight for a given frequency from target curve
+    fn interpolate_weight(&self, target_curve: &TargetCurveData, frequency: f64, error_sign: f64) -> f64 {
+        let curve_points = &target_curve.curve;
+        
+        if curve_points.is_empty() {
+            return 1.0;
+        }
+
+        // Find the appropriate weight
+        if frequency <= curve_points[0].frequency {
+            return self.extract_weight_value(&curve_points[0].weight, error_sign);
+        }
+
+        if frequency >= curve_points[curve_points.len() - 1].frequency {
+            return self.extract_weight_value(&curve_points[curve_points.len() - 1].weight, error_sign);
+        }
+
+        // Find the two points to interpolate between
+        let mut i = 0;
+        while i < curve_points.len() - 1 && curve_points[i + 1].frequency < frequency {
+            i += 1;
+        }
+
+        let p1 = &curve_points[i];
+        let p2 = &curve_points[i + 1];
+
+        // Extract weights from both points
+        let w1 = self.extract_weight_value(&p1.weight, error_sign);
+        let w2 = self.extract_weight_value(&p2.weight, error_sign);
+
+        // Linear interpolation in log-frequency space
+        let log_f = frequency.ln();
+        let log_f1 = p1.frequency.ln();
+        let log_f2 = p2.frequency.ln();
+        
+        if (log_f2 - log_f1).abs() < 1e-10 {
+            return w1;
+        }
+
+        let t = (log_f - log_f1) / (log_f2 - log_f1);
+        w1 + t * (w2 - w1)
+    }
+
+    /// Extract weight value considering asymmetric weights (positive vs negative errors)
+    fn extract_weight_value(&self, weight_opt: &Option<Weight>, error_sign: f64) -> f64 {
+        match weight_opt {
+            None => 1.0,
+            Some(Weight::Single(w)) => *w,
+            Some(Weight::Tuple(w_pos, w_neg)) => {
+                if error_sign >= 0.0 { *w_pos } else { *w_neg }
+            },
+            Some(Weight::Triple(w_pos, w_neg, _)) => {
+                if error_sign >= 0.0 { *w_pos } else { *w_neg }
+            }
+        }
+    }
+
+    /// Generate target weights for optimization frequencies
+    pub fn generate_target_weights(&self, target_curve: &TargetCurveData, frequencies: &[f64], 
+                                 measured: &[f64], target: &[f64]) -> Vec<f64> {
+        let mut weights = Vec::with_capacity(frequencies.len());
+
+        for i in 0..frequencies.len() {
+            let freq = frequencies[i];
+            let error = measured[i] - target[i];
+            let weight = self.interpolate_weight(target_curve, freq, error);
+            weights.push(weight);
+        }
+
+        weights
+    }
+
     /// Calculate RMS error between measured and target responses
     pub fn calculate_error(&self, measured: &[f64], target: &[f64]) -> f64 {
         assert_eq!(measured.len(), target.len());
@@ -124,6 +322,97 @@ impl RoomEQOptimizer {
         }
     }
 
+    /// Calculate weighted RMS error between measured and target responses
+    pub fn calculate_weighted_error(&self, measured: &[f64], target: &[f64], weights: &[f64]) -> f64 {
+        assert_eq!(measured.len(), target.len());
+        assert_eq!(measured.len(), weights.len());
+        
+        let mut weighted_sum_sq = 0.0;
+        let mut total_weight = 0.0;
+
+        for i in 0..measured.len() {
+            let error = measured[i] - target[i];
+            let weight = weights[i];
+            weighted_sum_sq += (error * error) * weight;
+            total_weight += weight;
+        }
+
+        if total_weight > 0.0 {
+            (weighted_sum_sq / total_weight).sqrt()
+        } else {
+            0.0
+        }
+    }
+
+    /// Find usable frequency range for optimization (similar to Python version)
+    pub fn find_usable_range(&self, frequencies: &[f64], magnitudes: &[f64]) -> (usize, usize, f64, f64) {
+        let min_db = -8.0;
+        let avg_range = (200.0, 8000.0);
+        let max_fails = if frequencies.len() >= 64 { 2 } else { 1 };
+
+        // Calculate average level in the specified range
+        let mut avg_sum = 0.0;
+        let mut avg_count = 0;
+        for i in 0..frequencies.len() {
+            if frequencies[i] >= avg_range.0 && frequencies[i] <= avg_range.1 {
+                avg_sum += magnitudes[i];
+                avg_count += 1;
+            }
+        }
+        
+        if avg_count == 0 {
+            // Fallback to full range if no frequencies in avg range
+            return (0, frequencies.len() - 1, frequencies[0], frequencies[frequencies.len() - 1]);
+        }
+
+        let avg_db = avg_sum / avg_count as f64;
+        
+        // Find center frequency index (closest to 1kHz)
+        let mut center_idx = 0;
+        let mut min_diff = f64::INFINITY;
+        for i in 0..frequencies.len() {
+            let diff = (frequencies[i] - 1000.0).abs();
+            if diff < min_diff {
+                min_diff = diff;
+                center_idx = i;
+            }
+        }
+
+        // Find usable range going down from center
+        let mut fails = 0;
+        let mut low_idx = 0;
+        for i in (0..center_idx).rev() {
+            let normalized_mag = magnitudes[i] - avg_db;
+            if normalized_mag < min_db {
+                fails += 1;
+            } else {
+                fails = 0;
+            }
+            if fails >= max_fails {
+                low_idx = (i + max_fails).min(frequencies.len() - 1);
+                break;
+            }
+        }
+
+        // Find usable range going up from center
+        fails = 0;
+        let mut high_idx = frequencies.len() - 1;
+        for i in center_idx..frequencies.len() {
+            let normalized_mag = magnitudes[i] - avg_db;
+            if normalized_mag < min_db {
+                fails += 1;
+            } else {
+                fails = 0;
+            }
+            if fails >= max_fails {
+                high_idx = i.saturating_sub(max_fails);
+                break;
+            }
+        }
+
+        (low_idx, high_idx, frequencies[low_idx], frequencies[high_idx])
+    }
+
     /// Generate optimization frequencies (log-spaced)
     pub fn generate_frequencies(&self, num_points: usize) -> Vec<f64> {
         let log_min = self.min_frequency.ln();
@@ -135,7 +424,7 @@ impl RoomEQOptimizer {
             .collect()
     }
 
-    /// Optimize EQ filters using a simplified approach
+    /// Optimize EQ filters using a brute-force approach with weighted error calculation
     pub fn optimize(&self, job: OptimizationJob) -> OptimizationResult {
         let start_time = std::time::Instant::now();
         let mut steps = Vec::new();
@@ -151,15 +440,33 @@ impl RoomEQOptimizer {
             .map(|&freq| job.measured_curve.interpolate_at(freq))
             .collect();
 
-        // Calculate original error
-        let original_error = self.calculate_error(&measured_response, &target_response);
+        // Find usable frequency range for adaptive high-pass placement
+        let (_low_idx, _high_idx, f_low, f_high) = self.find_usable_range(&frequencies, &measured_response);
+
+        // Output usable frequency range information
+        if self.output_progress {
+            let measured_freqs: Vec<f64> = job.measured_curve.frequencies.clone();
+            println!("Usable frequency range: {:.1} Hz - {:.1} Hz ({} frequency candidates)", 
+                    f_low, f_high, self.generate_frequency_candidates(f_low, f_high, &measured_freqs).len());
+        }
+
+        // Generate target weights for the measured vs target comparison
+        let target_weights = self.generate_target_weights(&job.target_curve, &frequencies, 
+                                                        &measured_response, &target_response);
+
+        // Calculate original error (weighted)
+        let original_error = self.calculate_weighted_error(&measured_response, &target_response, &target_weights);
         
         let mut filters = Vec::new();
         let mut current_response = measured_response.clone();
 
-        // Add high-pass filter if requested
+        // Add adaptive high-pass filter if requested (maximum one allowed)
         if job.optimizer_params.add_highpass {
-            let hp_filter = BiquadFilter::high_pass(80.0, 0.707, self.sample_rate);
+            // Calculate high-pass frequency as half of the lowest usable frequency (like Python)
+            let hp_frequency = (f_low / 2.0).max(20.0).min(120.0); // Clamp between 20-120Hz for safety
+            let hp_q = 0.5; // Use lower Q like Python for gentler slope
+            
+            let hp_filter = BiquadFilter::high_pass(hp_frequency, hp_q, self.sample_rate);
             let hp_response = hp_filter.frequency_response(&frequencies, self.sample_rate);
             
             // Apply high-pass response
@@ -169,79 +476,120 @@ impl RoomEQOptimizer {
             
             filters.push(hp_filter);
             
-            let error = self.calculate_error(&current_response, &target_response);
+            // Recalculate weights for updated response
+            let updated_weights = self.generate_target_weights(&job.target_curve, &frequencies, 
+                                                             &current_response, &target_response);
+            let error = self.calculate_weighted_error(&current_response, &target_response, &updated_weights);
             let step = OptimizationStep {
                 step: 0,
                 filters: filters.clone(),
                 corrected_response: FrequencyResponse::new(frequencies.clone(), current_response.clone()),
                 residual_error: error,
-                message: "Added high-pass filter".to_string(),
+                message: format!("Added adaptive high-pass filter at {:.1}Hz (f_low={:.1}Hz)", hp_frequency, f_low),
                 progress_percent: 0.0,
             };
             steps.push(step.clone());
-            println!("{}", serde_json::to_string(&step).unwrap());
+            
+            // Output step if progress is enabled
+            if self.output_progress {
+                self.output_step(&step);
+            }
         }
 
-        // Simple optimization: add filters for largest errors
+        // Optimization strategy: Brute force search for optimal PEQ filters
+        // For each filter, try all combinations of frequency, Q, and gain
+        // Keep the combination that provides the best improvement
+        let mut used_frequencies: Vec<f64> = Vec::new();
+        
         for filter_idx in 0..job.filter_count {
             let progress = (filter_idx as f64 / job.filter_count as f64) * 100.0;
             
-            // Find frequency with largest error
-            let mut max_error = 0.0;
-            let mut max_error_freq = 1000.0;
-            let mut max_error_idx = 0;
-
-            for i in 0..current_response.len() {
-                let error = (current_response[i] - target_response[i]).abs();
-                if error > max_error && frequencies[i] >= 20.0 && frequencies[i] <= 20000.0 {
-                    max_error = error;
-                    max_error_freq = frequencies[i];
-                    max_error_idx = i;
+            let mut best_filter: Option<BiquadFilter> = None;
+            // Update weights for current response before calculating error
+            let current_weights = self.generate_target_weights(&job.target_curve, &frequencies, 
+                                                             &current_response, &target_response);
+            let mut best_error = self.calculate_weighted_error(&current_response, &target_response, &current_weights);
+            let mut best_response = current_response.clone();
+            
+            // Define search ranges - limit frequencies to usable range, add interpolated frequencies
+            let measured_freqs: Vec<f64> = job.measured_curve.frequencies.clone();
+            let freq_candidates: Vec<f64> = self.generate_frequency_candidates(f_low, f_high, &measured_freqs);
+            let q_candidates = self.generate_q_candidates(&job.optimizer_params);
+            let gain_candidates = self.generate_gain_candidates(&job.optimizer_params);
+            
+            // Try all combinations of frequency, Q, and gain
+            for &freq in &freq_candidates {
+                // Skip frequency if already used (with tolerance)
+                let mut freq_already_used = false;
+                for &used_freq in &used_frequencies {
+                    if (freq / used_freq).abs().log2().abs() < 0.1 { // ~1/10 octave tolerance
+                        freq_already_used = true;
+                        break;
+                    }
+                }
+                if freq_already_used {
+                    continue;
+                }
+                
+                for &q in &q_candidates {
+                    for &gain_db in &gain_candidates {
+                        // Create candidate filter
+                        let candidate_filter = BiquadFilter::peaking_eq(freq, q, gain_db, self.sample_rate);
+                        
+                        // Calculate response with this filter added
+                        let filter_response = candidate_filter.frequency_response(&frequencies, self.sample_rate);
+                        let mut test_response = current_response.clone();
+                        for i in 0..test_response.len() {
+                            test_response[i] += filter_response[i];
+                        }
+                        
+                        // Calculate weights for the test response and check error
+                        let test_weights = self.generate_target_weights(&job.target_curve, &frequencies, 
+                                                                      &test_response, &target_response);
+                        let test_error = self.calculate_weighted_error(&test_response, &target_response, &test_weights);
+                        
+                        if test_error < best_error {
+                            best_error = test_error;
+                            best_filter = Some(candidate_filter);
+                            best_response = test_response;
+                        }
+                    }
                 }
             }
-
-            if max_error < 0.1 {
-                break; // Error is small enough
-            }
-
-            // Determine gain needed
-            let gain_needed = target_response[max_error_idx] - current_response[max_error_idx];
-            let gain_db = gain_needed.max(job.optimizer_params.mindb).min(job.optimizer_params.maxdb);
             
-            // Determine Q factor (limited by qmax)
-            let q = (job.optimizer_params.qmax * 0.3).max(1.0).min(job.optimizer_params.qmax);
-
-            // Create appropriate filter type based on frequency and gain
-            let new_filter = if max_error_freq < 200.0 && gain_db > 0.0 {
-                BiquadFilter::low_shelf(max_error_freq, q, gain_db, self.sample_rate)
-            } else if max_error_freq > 10000.0 && gain_db < 0.0 {
-                BiquadFilter::high_shelf(max_error_freq, q, gain_db, self.sample_rate)
+            // If we found an improvement, add the best filter
+            if let Some(filter) = best_filter {
+                // Track this frequency as used
+                used_frequencies.push(filter.frequency);
+                
+                filters.push(filter.clone());
+                current_response = best_response;
+                
+                let step = OptimizationStep {
+                    step: filter_idx + 1,
+                    filters: filters.clone(),
+                    corrected_response: FrequencyResponse::new(frequencies.clone(), current_response.clone()),
+                    residual_error: best_error,
+                    message: format!("Added filter {} at {:.1}Hz, Q={:.1}, {:.1}dB", 
+                                   filter_idx + 1, filter.frequency, filter.q, filter.gain_db),
+                    progress_percent: progress,
+                };
+                steps.push(step.clone());
+                
+                // Output step if progress is enabled
+                if self.output_progress {
+                    self.output_step(&step);
+                }
             } else {
-                BiquadFilter::peaking_eq(max_error_freq, q, gain_db, self.sample_rate)
-            };
-
-            // Apply filter response
-            let filter_response = new_filter.frequency_response(&frequencies, self.sample_rate);
-            for i in 0..current_response.len() {
-                current_response[i] += filter_response[i];
+                // No improvement found, stop optimization
+                break;
             }
-
-            filters.push(new_filter);
-
-            let error = self.calculate_error(&current_response, &target_response);
-            let step = OptimizationStep {
-                step: filter_idx + 1,
-                filters: filters.clone(),
-                corrected_response: FrequencyResponse::new(frequencies.clone(), current_response.clone()),
-                residual_error: error,
-                message: format!("Added filter {} at {:.1}Hz ({:.1}dB)", filter_idx + 1, max_error_freq, gain_db),
-                progress_percent: progress,
-            };
-            steps.push(step.clone());
-            println!("{}", serde_json::to_string(&step).unwrap());
         }
 
-        let final_error = self.calculate_error(&current_response, &target_response);
+        // Calculate final weighted error
+        let final_weights = self.generate_target_weights(&job.target_curve, &frequencies, 
+                                                       &current_response, &target_response);
+        let final_error = self.calculate_weighted_error(&current_response, &target_response, &final_weights);
         let improvement_db = 20.0 * (original_error / final_error.max(1e-10)).log10();
         let processing_time = start_time.elapsed().as_millis() as u64;
 
@@ -254,6 +602,8 @@ impl RoomEQOptimizer {
             steps,
             processing_time_ms: processing_time,
             error_message: None,
+            usable_freq_low: f_low,
+            usable_freq_high: f_high,
         }
     }
 }

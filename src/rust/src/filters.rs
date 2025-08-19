@@ -80,6 +80,11 @@ impl FrequencyResponse {
             i += 1;
         }
 
+        // Ensure i is within valid range for i+1 access
+        if i >= self.frequencies.len() - 1 {
+            return self.magnitudes_db[self.magnitudes_db.len() - 1];
+        }
+
         let f1 = self.frequencies[i];
         let f2 = self.frequencies[i + 1];
         let m1 = self.magnitudes_db[i];
