@@ -813,10 +813,11 @@ curl -X GET http://localhost:10315/eq/presets/optimizers
 
 ### EQ Optimization Process
 
-#### POST `/eq/optimize/start`
-Start EQ optimization from recording or FFT data with real-time progress reporting.
+#### POST `/eq/optimize`
+Run EQ optimization from recording or FFT data with real-time streaming results via Server-Sent Events.
 
-**Content-Type:** `application/json`
+**Content-Type:** `application/json`  
+**Response-Type:** `text/event-stream` (Server-Sent Events)
 
 **Request Body Options:**
 
@@ -859,7 +860,7 @@ Start EQ optimization from recording or FFT data with real-time progress reporti
 **Example Requests:**
 ```bash
 # Start optimization from recording
-curl -X POST http://localhost:10315/eq/optimize/start \
+curl -X POST http://localhost:10315/eq/optimize \
   -H "Content-Type: application/json" \
   -d '{
     "recording_id": "rec_20250818_143015_abc123",
@@ -869,7 +870,7 @@ curl -X POST http://localhost:10315/eq/optimize/start \
   }'
 
 # Start optimization from FFT data  
-curl -X POST http://localhost:10315/eq/optimize/start \
+curl -X POST http://localhost:10315/eq/optimize \
   -H "Content-Type: application/json" \
   -d '{
     "frequencies": [63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000],
@@ -880,7 +881,7 @@ curl -X POST http://localhost:10315/eq/optimize/start \
   }'
 
 # Start optimization with intermediate results every 2 filters
-curl -X POST http://localhost:10315/eq/optimize/start \
+curl -X POST http://localhost:10315/eq/optimize \
   -H "Content-Type: application/json" \
   -d '{
     "recording_id": "rec_20250818_143015_abc123",
@@ -891,18 +892,25 @@ curl -X POST http://localhost:10315/eq/optimize/start \
   }'
 ```
 
-**Response:**
-```json
-{
-  "status": "started",
-  "optimization_id": "opt_20250818_143025_xyz789",
-  "message": "EQ optimization started with 8 filters",
-  "estimated_duration": 15.0,
-  "target_curve": "weighted_flat",
-  "optimizer_preset": "default", 
-  "filter_count": 8
-}
+**Response (Streaming Server-Sent Events):**
+The endpoint returns a stream of Server-Sent Events with real-time optimization progress.
+
 ```
+Content-Type: text/event-stream
+Cache-Control: no-cache
+
+data: {"status": "started", "message": "EQ optimization started with 8 filters", "filter_count": 8, "target_curve": "weighted_flat", "optimizer_preset": "default"}
+
+data: {"status": "optimizing", "progress": 12.5, "current_step": "Optimizing filter 1/8", "elapsed_time": 2.1}
+
+data: {"status": "intermediate", "progress": 25.0, "current_step": "Filter 2 complete", "filters": [{"type": "PeakingEQ", "frequency": 125.0, "gain": -3.2, "q": 2.1}, {"type": "PeakingEQ", "frequency": 800.0, "gain": 4.5, "q": 1.8}]}
+
+data: {"status": "complete", "progress": 100.0, "optimization_time": 15.3, "filters": [...all optimized filters...]}
+```
+
+### Legacy Async API Endpoints (Deprecated)
+
+The following endpoints are deprecated in favor of the streaming API above:
 
 #### GET `/eq/optimize/status/<optimization_id>`
 Get real-time optimization progress with detailed step information.
@@ -1130,7 +1138,7 @@ done
 
 # 4. Start EQ optimization 
 echo "4. Starting EQ optimization..."
-OPT_RESPONSE=$(curl -s -X POST "$API_URL/eq/optimize/start" \
+OPT_RESPONSE=$(curl -s -X POST "$API_URL/eq/optimize" \
   -H "Content-Type: application/json" \
   -d "{
     \"recording_id\": \"$RECORDING_ID\",
@@ -1196,7 +1204,7 @@ echo "Room correction workflow completed successfully!"
 #### Quick Optimization from Existing FFT Data
 ```bash
 # Optimize using pre-analyzed frequency response data
-curl -X POST http://localhost:10315/eq/optimize/start \
+curl -X POST http://localhost:10315/eq/optimize \
   -H "Content-Type: application/json" \
   -d '{
     "frequencies": [63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
