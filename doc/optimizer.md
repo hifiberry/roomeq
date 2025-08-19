@@ -7,7 +7,6 @@ The RoomEQ optimizer is a high-performance, Rust-based room equalization system 
 ## System Architecture
 
 ### Backend: Rust Optimizer (v0.6.0)
-- **Performance**: 20-30% faster than Python implementations
 - **Algorithm**: Brute-force search with intelligent optimization
 - **Output**: Real-time streaming without buffering
 - **Binary Location**: `src/rust/target/release/roomeq-optimizer`
@@ -342,7 +341,6 @@ Each biquad calculated at measurement frequencies for optimization.
 - Adaptive high-pass filter placement
 - Psychoacoustic weighting system
 - Real-time streaming output
-- 20-30% performance improvement over Python
 
 ### v0.7.0 (Current REST API)  
 - Integrated Rust optimizer backend
