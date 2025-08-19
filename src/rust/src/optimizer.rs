@@ -52,6 +52,7 @@ pub struct RoomEQOptimizer {
     max_frequency: f64,
     output_progress: bool,
     human_readable: bool,
+    output_frequency_response: bool,
 }
 
 impl RoomEQOptimizer {
@@ -62,13 +63,15 @@ impl RoomEQOptimizer {
             max_frequency: 20000.0,
             output_progress: true,  // Default to current behavior
             human_readable: false,  // Default to JSON output
+            output_frequency_response: false,  // Default to no frequency response
         }
     }
 
     /// Configure output mode for progress steps and format
-    pub fn set_output_mode(&mut self, output_progress: bool, human_readable: bool) {
+    pub fn set_output_mode(&mut self, output_progress: bool, human_readable: bool, output_frequency_response: bool) {
         self.output_progress = output_progress;
         self.human_readable = human_readable;
+        self.output_frequency_response = output_frequency_response;
     }
 
     /// Output an optimization step in the configured format
@@ -85,6 +88,32 @@ impl RoomEQOptimizer {
             if let Ok(json) = serde_json::to_string(step) {
                 println!("{}", json);
             }
+        }
+    }
+
+    /// Output frequency response in the configured format
+    fn output_frequency_response(&self, step: usize, frequencies: &[f64], magnitudes: &[f64], phase: Option<&[f64]>) {
+        if !self.output_frequency_response {
+            return;
+        }
+
+        if self.human_readable {
+            println!("FREQUENCY_RESPONSE:step_{}:frequencies=[{:.1}-{:.1}Hz], magnitudes=[{:.2}-{:.2}dB]", 
+                     step, frequencies[0], frequencies[frequencies.len()-1],
+                     magnitudes.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
+                     magnitudes.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b)));
+        } else {
+            // JSON output format that Python expects
+            let mut response_data = serde_json::json!({
+                "frequencies": frequencies,
+                "magnitude_db": magnitudes
+            });
+            
+            if let Some(phase_data) = phase {
+                response_data["phase_degrees"] = serde_json::json!(phase_data);
+            }
+
+            println!("FREQUENCY_RESPONSE:step_{}:{}", step, response_data);
         }
     }
 
@@ -495,6 +524,12 @@ impl RoomEQOptimizer {
             if self.output_progress {
                 self.output_step(&step);
             }
+
+            // Output frequency response if enabled
+            if self.output_frequency_response {
+                let (magnitude_response, phase_response) = cascade_frequency_and_phase_response(&filters, &frequencies, self.sample_rate);
+                self.output_frequency_response(0, &frequencies, &magnitude_response, Some(&phase_response));
+            }
         }
 
         // Optimization strategy: Brute force search for optimal PEQ filters
@@ -580,6 +615,12 @@ impl RoomEQOptimizer {
                 // Output step if progress is enabled
                 if self.output_progress {
                     self.output_step(&step);
+                }
+
+                // Output frequency response if enabled
+                if self.output_frequency_response {
+                    let (magnitude_response, phase_response) = cascade_frequency_and_phase_response(&filters, &frequencies, self.sample_rate);
+                    self.output_frequency_response(step.step, &frequencies, &magnitude_response, Some(&phase_response));
                 }
             } else {
                 // No improvement found, stop optimization

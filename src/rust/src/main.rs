@@ -23,6 +23,10 @@ struct Args {
     /// Output human-readable text instead of JSON
     #[arg(long)]
     human_readable: bool,
+
+    /// Output frequency response after each filter step
+    #[arg(long)]
+    frequency_response: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -68,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create optimizer with output mode configuration
     let mut optimizer = RoomEQOptimizer::new(job.sample_rate);
-    optimizer.set_output_mode(args.progress, args.human_readable);
+    optimizer.set_output_mode(args.progress, args.human_readable, args.frequency_response);
 
     // Run optimization
     let result = optimizer.optimize(job);

@@ -180,6 +180,31 @@ impl BiquadFilter {
         }).collect()
     }
 
+    /// Calculate frequency and phase response of this filter at given frequencies
+    pub fn frequency_and_phase_response(&self, frequencies: &[f64], sample_rate: f64) -> (Vec<f64>, Vec<f64>) {
+        let mut magnitude = Vec::with_capacity(frequencies.len());
+        let mut phase = Vec::with_capacity(frequencies.len());
+
+        for &freq in frequencies {
+            let w = 2.0 * PI * freq / sample_rate;
+            let z = Complex::new(0.0, w).exp();
+
+            let numerator = self.coefficients.b[0] + 
+                           self.coefficients.b[1] * z.inv() + 
+                           self.coefficients.b[2] * z.inv() * z.inv();
+            
+            let denominator = self.coefficients.a[0] + 
+                             self.coefficients.a[1] * z.inv() + 
+                             self.coefficients.a[2] * z.inv() * z.inv();
+
+            let h = numerator / denominator;
+            magnitude.push(20.0 * h.norm().log10());
+            phase.push(h.arg() * 180.0 / PI); // Convert to degrees
+        }
+
+        (magnitude, phase)
+    }
+
     pub fn as_text(&self) -> String {
         match self.filter_type.as_str() {
             "hp" => format!("hp:{:.1}:{:.3}", self.frequency, self.q),
@@ -208,4 +233,24 @@ pub fn cascade_frequency_response(filters: &[BiquadFilter], frequencies: &[f64],
     }
 
     total_response
+}
+
+/// Calculate cascaded frequency and phase response of multiple filters
+pub fn cascade_frequency_and_phase_response(filters: &[BiquadFilter], frequencies: &[f64], sample_rate: f64) -> (Vec<f64>, Vec<f64>) {
+    if filters.is_empty() {
+        return (vec![0.0; frequencies.len()], vec![0.0; frequencies.len()]);
+    }
+
+    let mut total_magnitude = vec![0.0; frequencies.len()];
+    let mut total_phase = vec![0.0; frequencies.len()];
+    
+    for filter in filters {
+        let (filter_magnitude, filter_phase) = filter.frequency_and_phase_response(frequencies, sample_rate);
+        for i in 0..frequencies.len() {
+            total_magnitude[i] += filter_magnitude[i];
+            total_phase[i] += filter_phase[i];
+        }
+    }
+
+    (total_magnitude, total_phase)
 }
