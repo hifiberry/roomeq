@@ -905,10 +905,10 @@ curl -X GET http://localhost:10315/eq/presets/optimizers
 ### EQ Optimization Process
 
 #### POST `/eq/optimize`
-Run EQ optimization from recording or FFT data with real-time streaming results via Server-Sent Events.
+Run high-performance EQ optimization using Rust backend with real-time streaming results.
 
 **Content-Type:** `application/json`  
-**Response-Type:** `text/event-stream` (Server-Sent Events)
+**Response-Type:** `text/plain` (Server-Sent Events stream)
 
 **Request Body Options:**
 
@@ -920,7 +920,8 @@ Run EQ optimization from recording or FFT data with real-time streaming results 
   "optimizer_preset": "default",
   "filter_count": 8,
   "window": "hann",
-  "points_per_octave": 12
+  "points_per_octave": 12,
+  "normalize": 1000.0
 }
 ```
 
@@ -929,10 +930,11 @@ Run EQ optimization from recording or FFT data with real-time streaming results 
 {
   "frequencies": [20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200],
   "magnitudes": [-5.2, -3.1, -2.8, -1.5, -0.8, 2.1, 3.5, 1.2, -1.8, -3.2, -4.1],
-  "target_curve": "harman", 
+  "target_curve": "harman",
   "optimizer_preset": "smooth",
   "filter_count": 6,
-  "sample_rate": 48000
+  "sample_rate": 48000,
+  "add_highpass": true
 }
 ```
 
@@ -943,61 +945,104 @@ Run EQ optimization from recording or FFT data with real-time streaming results 
 - `target_curve` (string): Target response curve name (see `/eq/presets/targets`)
 - `optimizer_preset` (string): Optimization style (see `/eq/presets/optimizers`)
 - `filter_count` (integer, optional): Number of EQ filters to generate (1-20, default: 8)
-- `intermediate_results_interval` (integer, optional): Return intermediate results every n filters (0=disabled, default: 0)
-- `window` (string, optional): FFT window function for recording analysis
-- `points_per_octave` (integer, optional): Frequency resolution (1-100, default: 12)
-- `sample_rate` (integer, optional): Audio sample rate for FFT data (default: 48000)
+- `sample_rate` (float, optional): Audio sample rate for FFT data (default: 48000)
+- `add_highpass` (boolean, optional): Override preset high-pass filter setting
+- `window` (string, optional): FFT window function for recording analysis (default: "hann")
+- `normalize` (float, optional): Normalization frequency for recording analysis
+- `points_per_octave` (integer, optional): Frequency resolution for recording analysis (1-100, default: 12)
 
 **Example Requests:**
 ```bash
-# Start optimization from recording
-curl -X POST http://localhost:10315/eq/optimize \
+# Optimize from recording with streaming results
+curl -X POST "http://localhost:10315/eq/optimize" \
   -H "Content-Type: application/json" \
   -d '{
-    "recording_id": "rec_20250818_143015_abc123",
+    "recording_id": "abc12345",
     "target_curve": "weighted_flat",
     "optimizer_preset": "default",
     "filter_count": 8
   }'
 
-# Start optimization from FFT data  
-curl -X POST http://localhost:10315/eq/optimize \
+# Optimize from FFT data with custom parameters
+curl -X POST "http://localhost:10315/eq/optimize" \
   -H "Content-Type: application/json" \
   -d '{
     "frequencies": [63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000],
     "magnitudes": [2.1, 3.8, 4.2, 3.1, 1.9, 0.8, -0.5, -1.2, -0.8, 0.2, 1.5, 2.8, 3.2, 2.1, 0.9, -1.2, -2.8, -3.5, -2.9, -1.8, -0.5, 1.2, 2.5],
     "target_curve": "harman",
-    "optimizer_preset": "smooth", 
-    "filter_count": 6
-  }'
-
-# Start optimization with intermediate results every 2 filters
-curl -X POST http://localhost:10315/eq/optimize \
-  -H "Content-Type: application/json" \
-  -d '{
-    "recording_id": "rec_20250818_143015_abc123",
-    "target_curve": "weighted_flat",
-    "optimizer_preset": "default",
-    "filter_count": 8,
-    "intermediate_results_interval": 2
+    "optimizer_preset": "smooth",
+    "filter_count": 6,
+    "sample_rate": 48000,
+    "add_highpass": true
   }'
 ```
 
-**Response (Streaming Server-Sent Events):**
-The endpoint returns a stream of Server-Sent Events with real-time optimization progress.
+**Response (Real-time Streaming Events):**
+The endpoint returns a stream of Server-Sent Events with real-time optimization progress and frequency response:
 
 ```
-Content-Type: text/event-stream
-Cache-Control: no-cache
+data: {"type": "started", "message": "Starting optimization with 250 frequency points", "parameters": {"target_curve": "weighted_flat", "optimizer_preset": "default", "filter_count": 8, "sample_rate": 48000, "add_highpass": true}}
 
-data: {"status": "started", "message": "EQ optimization started with 8 filters", "filter_count": 8, "target_curve": "weighted_flat", "optimizer_preset": "default"}
+data: {"type": "initialization", "optimization_id": "abc12345", "step": 0, "message": "Detected usable frequency range: 20.0 - 20000.0 Hz (250 candidates)", "usable_range": {"f_low": 20.0, "f_high": 20000.0, "candidates": 250}, "progress": 0.0, "timestamp": 1692123456.789}
 
-data: {"status": "optimizing", "progress": 12.5, "current_step": "Optimizing filter 1/8", "elapsed_time": 2.1}
+data: {"type": "filter_added", "optimization_id": "abc12345", "step": 1, "message": "Step 1: Added filter 1 at 120.0Hz, Q=1.5, 4.2dB (Error: 3.8 dB)", "filter": {"filter_type": "peaking_eq", "frequency": 120.0, "q": 1.5, "gain_db": 4.2, "description": "Peaking Eq 120Hz +4.2dB"}, "total_filters": 1, "current_filter_set": [{"filter_type": "peaking_eq", "frequency": 120.0, "q": 1.5, "gain_db": 4.2, "description": "Peaking Eq 120Hz +4.2dB", "text_format": "eq:120.0:1.500:4.20"}], "progress": 12.5, "timestamp": 1692123457.234}
 
-data: {"status": "intermediate", "progress": 25.0, "current_step": "Filter 2 complete", "filters": [{"type": "PeakingEQ", "frequency": 125.0, "gain": -3.2, "q": 2.1}, {"type": "PeakingEQ", "frequency": 800.0, "gain": 4.5, "q": 1.8}]}
+data: {"type": "frequency_response", "optimization_id": "abc12345", "step": 1, "message": "Frequency response calculated for step_1", "frequency_response": {"frequencies": [20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000, 20000], "magnitude_db": [0.1, 0.2, 0.4, 0.8, 1.2, 1.8, 2.5, 3.2, 4.1, 3.8, 3.2, 2.1, 1.2, 0.5, -0.2, -0.8, -1.5, -2.1, -2.8, -3.2, -3.8, -2.9, -1.8, -0.5, 0.8, 1.5, 2.2, 1.8, 1.2, 0.5], "phase_degrees": [...]}, "timestamp": 1692123457.456}
 
-data: {"status": "complete", "progress": 100.0, "optimization_time": 15.3, "filters": [...all optimized filters...]}
+data: {"type": "filter_added", "optimization_id": "abc12345", "step": 2, "message": "Step 2: Added filter 2 at 2500.0Hz, Q=2.8, -3.8dB (Error: 2.1 dB)", "filter": {"filter_type": "peaking_eq", "frequency": 2500.0, "q": 2.8, "gain_db": -3.8, "description": "Peaking Eq 2500Hz -3.8dB"}, "total_filters": 2, "current_filter_set": [{"filter_type": "peaking_eq", "frequency": 120.0, "q": 1.5, "gain_db": 4.2, "description": "Peaking Eq 120Hz +4.2dB", "text_format": "eq:120.0:1.500:4.20"}, {"filter_type": "peaking_eq", "frequency": 2500.0, "q": 2.8, "gain_db": -3.8, "description": "Peaking Eq 2500Hz -3.8dB", "text_format": "eq:2500.0:2.800:-3.80"}], "progress": 25.0, "timestamp": 1692123458.567}
+
+data: {"type": "frequency_response", "optimization_id": "abc12345", "step": 2, "message": "Frequency response calculated for step_2", "frequency_response": {"frequencies": [...], "magnitude_db": [...updated response...], "phase_degrees": [...]}, "timestamp": 1692123458.789}
+
+data: {"type": "completed", "optimization_id": "abc12345", "step": 8, "message": "Optimization completed successfully", "result": {"success": true, "filters": [...], "filter_count": 8, "original_error": 8.5, "final_error": 1.9, "improvement_db": 6.6, "processing_time": 18.7, "final_frequency_response": {"frequencies": [...], "magnitude_db": [...], "phase_degrees": [...]}}, "progress": 100.0, "processing_time": 18.7, "timestamp": 1692123465.890}
 ```
+
+**Optimization Result Structure:**
+```json
+{
+  "success": true,
+  "filters": [
+    {
+      "filter_type": "peaking_eq",
+      "frequency": 120.0,
+      "q": 1.5,
+      "gain_db": 4.2,
+      "description": "Peaking Eq 120Hz +4.2dB",
+      "text_format": "eq:120.0:1.500:4.20"
+    },
+    {
+      "filter_type": "high_pass",
+      "frequency": 60.0,
+      "q": 0.5,
+      "gain_db": 0.0,
+      "description": "High Pass 60Hz",
+      "text_format": "hp:60.0:0.500:0.00"
+    }
+  ],
+  "filter_count": 8,
+  "usable_range": [20.0, 20000.0, 250],
+  "original_error": 8.5,
+  "final_error": 1.9,
+  "improvement_db": 6.6,
+  "processing_time": 18.7
+}
+```
+
+**Event Types:**
+- `started`: Optimization initialization
+- `initialization`: Usable frequency range detection
+- `filter_added`: New filter added to the solution with complete list of all filters accumulated so far
+- `frequency_response`: Frequency response calculated by Rust optimizer after each filter step
+- `completed`: Optimization finished successfully with final frequency response
+- `error`: Optimization failed with error message
+
+**Optimization Features:**
+- **High-Performance Rust Backend**: Fast optimization with intelligent frequency management
+- **Real-time Streaming**: Live progress updates without buffering
+- **Frequency Response Calculation**: Complete filter set and frequency response after each step
+- **Frequency Deduplication**: Removes redundant frequency points for efficiency
+- **Adaptive High-pass**: Intelligent high-pass filter placement
+- **Usable Range Detection**: Automatically detects useful frequency range
+- **Text Format Output**: Ready-to-use filter strings for EQ software
 
 ### Legacy Async API Endpoints (Deprecated)
 
