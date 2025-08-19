@@ -141,43 +141,4 @@ class Biquad:
         return cls(a0, a1, a2, b0, b1, b2, f"High shelf {f0}Hz {db_gain}dB", "hs", f0, q, db_gain)
 
 
-def filter_cascade_response(frequencies: List[float], filters: List[Biquad], 
-                          fs: float = 48000) -> Tuple[List[float], List[float]]:
-    """
-    Calculate magnitude and phase response of cascaded biquad filters.
-    
-    Args:
-        frequencies: List of frequencies to evaluate
-        filters: List of Biquad filters to cascade
-        fs: Sample rate
-        
-    Returns:
-        Tuple of (magnitude_db, phase_degrees)
-    """
-    from scipy.signal import freqz
-    
-    magnitudes = []
-    phases = []
-    
-    for frequency in frequencies:
-        total_mag_db = 0.0
-        total_phase = 0.0
-        
-        for biquad in filters:
-            # Calculate frequency response at this frequency
-            w = 2 * math.pi * frequency / fs
-            _, h = freqz([biquad.b0, biquad.b1, biquad.b2], 
-                        [biquad.a0, biquad.a1, biquad.a2], 
-                        worN=[w])
-            
-            # Accumulate magnitude (in dB) and phase
-            mag_db = 20 * math.log10(abs(h[0]) + 1e-20)
-            phase_rad = np.angle(h[0])
-            
-            total_mag_db += mag_db
-            total_phase += phase_rad
-            
-        magnitudes.append(total_mag_db)
-        phases.append(math.degrees(total_phase))
-    
-    return magnitudes, phases
+

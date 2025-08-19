@@ -220,11 +220,33 @@ class RustOptimizer:
                                     "message": line,
                                     "filter": filter_info,
                                     "total_filters": len(filters),
+                                    "current_filter_set": filters.copy(),  # Full list of all filters up to this point
                                     "progress": min(95.0, (len(filters) / 10) * 100),  # Estimate progress
                                     "timestamp": time.time()
                                 }
                                 step_number += 1
                     except (ValueError, IndexError):
+                        continue
+                
+                elif line.startswith("FREQUENCY_RESPONSE:"):
+                    # Parse frequency response data from Rust optimizer
+                    try:
+                        # Expected format: "FREQUENCY_RESPONSE:step_N:{json_data}"
+                        parts = line.split(":", 2)
+                        if len(parts) >= 3:
+                            step_info = parts[1]
+                            response_data = json.loads(parts[2])
+                            
+                            yield {
+                                "type": "frequency_response",
+                                "optimization_id": optimization_id,
+                                "step": step_number,
+                                "message": f"Frequency response calculated for {step_info}",
+                                "frequency_response": response_data,
+                                "timestamp": time.time()
+                            }
+                    except (ValueError, json.JSONDecodeError) as e:
+                        logger.warning(f"Could not parse frequency response data: {e}")
                         continue
                 
                 elif "Added:" in line:
