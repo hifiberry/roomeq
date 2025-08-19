@@ -76,7 +76,7 @@ impl RoomEQOptimizer {
 
     /// Output an optimization step in the configured format
     /// Output optimization step with optional frequency response in the configured format
-    fn output_step_with_frequency_response(&self, step: &OptimizationStep, frequencies: Option<&[f64]>, magnitudes: Option<&[f64]>, phase: Option<&[f64]>) {
+    fn output_step_with_frequency_response(&self, step: &OptimizationStep, frequencies: Option<&[f64]>, filter_magnitude: Option<&[f64]>, filter_phase: Option<&[f64]>, original_magnitude: Option<&[f64]>) {
         if self.human_readable {
             println!("Step {}: {} (Error: {:.2} dB, Progress: {:.1}%)", 
                      step.step, step.message, step.residual_error, step.progress_percent);
@@ -86,27 +86,41 @@ impl RoomEQOptimizer {
             }
 
             // Output frequency response if enabled and data provided
-            if self.output_frequency_response && frequencies.is_some() && magnitudes.is_some() {
+            if self.output_frequency_response && frequencies.is_some() && filter_magnitude.is_some() {
                 let freq_data = frequencies.unwrap();
-                let mag_data = magnitudes.unwrap();
-                println!("FREQUENCY_RESPONSE:step_{}:frequencies=[{:.1}-{:.1}Hz], magnitudes=[{:.2}-{:.2}dB]", 
+                let filter_mag_data = filter_magnitude.unwrap();
+                println!("FREQUENCY_RESPONSE:step_{}:frequencies=[{:.1}-{:.1}Hz], filter_magnitudes=[{:.2}-{:.2}dB]", 
                          step.step, freq_data[0], freq_data[freq_data.len()-1],
-                         mag_data.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
-                         mag_data.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b)));
+                         filter_mag_data.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
+                         filter_mag_data.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b)));
             }
         } else {
             // JSON output - combine step data with frequency response if enabled
             let mut step_json = serde_json::to_value(step).unwrap();
             
-            if self.output_frequency_response && frequencies.is_some() && magnitudes.is_some() {
-                let mut frequency_response = serde_json::json!({
-                    "frequencies": frequencies.unwrap(),
-                    "magnitude_db": magnitudes.unwrap()
-                });
+            if self.output_frequency_response && frequencies.is_some() && filter_magnitude.is_some() {
+                let frequencies = frequencies.unwrap();
+                let filter_mag = filter_magnitude.unwrap();
                 
-                if let Some(phase_data) = phase {
-                    frequency_response["phase_degrees"] = serde_json::json!(phase_data);
-                }
+                // Calculate resulting response (original + filter applied)
+                let resulting_magnitude = if let Some(orig_mag) = original_magnitude {
+                    orig_mag.iter().zip(filter_mag.iter())
+                           .map(|(orig, filt)| orig + filt)
+                           .collect::<Vec<f64>>()
+                } else {
+                    filter_mag.to_vec()
+                };
+
+                let frequency_response = serde_json::json!({
+                    "frequencies": frequencies,
+                    "filter_response": {
+                        "magnitude_db": filter_mag,
+                        "phase_degrees": filter_phase.unwrap_or(&[])
+                    },
+                    "resulting_response": {
+                        "magnitude_db": resulting_magnitude
+                    }
+                });
                 
                 step_json["frequency_response"] = frequency_response;
             }
@@ -118,7 +132,7 @@ impl RoomEQOptimizer {
     }
 
     fn output_step(&self, step: &OptimizationStep) {
-        self.output_step_with_frequency_response(step, None, None, None);
+        self.output_step_with_frequency_response(step, None, None, None, None);
     }
 
     /// Calculate and output frequency response if enabled
@@ -557,8 +571,9 @@ impl RoomEQOptimizer {
             if self.output_progress {
                 if self.output_frequency_response {
                     let input_frequencies = &job.measured_curve.frequencies;
+                    let original_magnitudes = &job.measured_curve.magnitudes_db;
                     let (magnitude_response, phase_response) = cascade_frequency_and_phase_response(&filters, input_frequencies, self.sample_rate);
-                    self.output_step_with_frequency_response(&step, Some(input_frequencies), Some(&magnitude_response), Some(&phase_response));
+                    self.output_step_with_frequency_response(&step, Some(input_frequencies), Some(&magnitude_response), Some(&phase_response), Some(original_magnitudes));
                 } else {
                     self.output_step(&step);
                 }
@@ -649,8 +664,9 @@ impl RoomEQOptimizer {
                 if self.output_progress {
                     if self.output_frequency_response {
                         let input_frequencies = &job.measured_curve.frequencies;
+                        let original_magnitudes = &job.measured_curve.magnitudes_db;
                         let (magnitude_response, phase_response) = cascade_frequency_and_phase_response(&filters, input_frequencies, self.sample_rate);
-                        self.output_step_with_frequency_response(&step, Some(input_frequencies), Some(&magnitude_response), Some(&phase_response));
+                        self.output_step_with_frequency_response(&step, Some(input_frequencies), Some(&magnitude_response), Some(&phase_response), Some(original_magnitudes));
                     } else {
                         self.output_step(&step);
                     }
