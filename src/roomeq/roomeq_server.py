@@ -35,9 +35,6 @@ from .recording import (
 from .microphone import MicrophoneDetector, detect_microphones
 from .analysis import measure_spl
 from .signal_generator import SignalGenerator
-from .eq_optimizer import (
-    generate_parametric_eq, generate_eq_filters, generate_target_response
-)
 from .rust_optimizer import optimize_with_rust, RustOptimizerError
 from .presets import list_target_curves, list_optimizer_presets
 
