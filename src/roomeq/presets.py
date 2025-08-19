@@ -98,7 +98,8 @@ OPTIMIZER_PRESETS = {
         "qmax": 10.0,
         "mindb": -10.0,
         "maxdb": 3.0,
-        "add_highpass": True
+        "add_highpass": True,
+        "acceptable_error": 1.0
     },
     
     "verysmooth": {
@@ -107,7 +108,8 @@ OPTIMIZER_PRESETS = {
         "qmax": 2.0,
         "mindb": -8.0,
         "maxdb": 2.0,
-        "add_highpass": True
+        "add_highpass": True,
+        "acceptable_error": 2.0
     },
     
     "smooth": {
@@ -116,7 +118,8 @@ OPTIMIZER_PRESETS = {
         "qmax": 5.0,
         "mindb": -8.0,
         "maxdb": 2.0,
-        "add_highpass": True
+        "add_highpass": True,
+        "acceptable_error": 2.0
     },
     
     "aggressive": {
@@ -125,7 +128,8 @@ OPTIMIZER_PRESETS = {
         "qmax": 15.0,
         "mindb": -15.0,
         "maxdb": 5.0,
-        "add_highpass": True
+        "add_highpass": True,
+        "acceptable_error": 0
     },
     
     "precise": {
@@ -134,7 +138,8 @@ OPTIMIZER_PRESETS = {
         "qmax": 20.0,
         "mindb": -20.0,
         "maxdb": 6.0,
-        "add_highpass": True
+        "add_highpass": True,
+        "acceptable_error": 0
     },
     
     "no_highpass": {
@@ -143,7 +148,8 @@ OPTIMIZER_PRESETS = {
         "qmax": 10.0,
         "mindb": -10.0,
         "maxdb": 3.0,
-        "add_highpass": False
+        "add_highpass": False,
+        "acceptable_error": 2.0
     }
 }
 
@@ -169,7 +175,8 @@ def list_optimizer_presets():
         "qmax": preset["qmax"],
         "mindb": preset["mindb"],
         "maxdb": preset["maxdb"],
-        "add_highpass": preset["add_highpass"]
+        "add_highpass": preset["add_highpass"],
+        "acceptable_error": preset["acceptable_error"]
     } for name, preset in OPTIMIZER_PRESETS.items()]
 
 
