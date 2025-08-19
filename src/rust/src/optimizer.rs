@@ -525,10 +525,11 @@ impl RoomEQOptimizer {
                 self.output_step(&step);
             }
 
-            // Output frequency response if enabled
+            // Output frequency response if enabled (using original input frequencies)
             if self.output_frequency_response {
-                let (magnitude_response, phase_response) = cascade_frequency_and_phase_response(&filters, &frequencies, self.sample_rate);
-                self.output_frequency_response(0, &frequencies, &magnitude_response, Some(&phase_response));
+                let input_frequencies = &job.measured_curve.frequencies;
+                let (magnitude_response, phase_response) = cascade_frequency_and_phase_response(&filters, input_frequencies, self.sample_rate);
+                self.output_frequency_response(0, input_frequencies, &magnitude_response, Some(&phase_response));
             }
         }
 
@@ -617,10 +618,11 @@ impl RoomEQOptimizer {
                     self.output_step(&step);
                 }
 
-                // Output frequency response if enabled
+                // Output frequency response if enabled (using original input frequencies)
                 if self.output_frequency_response {
-                    let (magnitude_response, phase_response) = cascade_frequency_and_phase_response(&filters, &frequencies, self.sample_rate);
-                    self.output_frequency_response(step.step, &frequencies, &magnitude_response, Some(&phase_response));
+                    let input_frequencies = &job.measured_curve.frequencies;
+                    let (magnitude_response, phase_response) = cascade_frequency_and_phase_response(&filters, input_frequencies, self.sample_rate);
+                    self.output_frequency_response(step.step, input_frequencies, &magnitude_response, Some(&phase_response));
                 }
             } else {
                 // No improvement found, stop optimization

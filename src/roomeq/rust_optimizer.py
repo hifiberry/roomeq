@@ -144,7 +144,7 @@ class RustOptimizer:
     
     def _run_optimizer_streaming(self, job_file: str) -> Iterator[Dict[str, Any]]:
         """Run the Rust optimizer with streaming output."""
-        cmd = [self.binary_path, "--progress", "--result", "--human-readable", "--frequency-response"]
+        cmd = [self.binary_path, "--progress", "--result", "--frequency-response"]
         
         try:
             # Start process with streaming I/O
@@ -234,18 +234,29 @@ class RustOptimizer:
                         # Expected format: "FREQUENCY_RESPONSE:step_N:{json_data}"
                         parts = line.split(":", 2)
                         if len(parts) >= 3:
-                            step_info = parts[1]
+                            step_info = parts[1]  # e.g., "step_0"
                             response_data = json.loads(parts[2])
                             
+                            # Extract step number from step_info
+                            step_match = step_info.replace('step_', '')
+                            try:
+                                response_step = int(step_match)
+                            except ValueError:
+                                response_step = step_number
+                            
                             yield {
-                                "type": "frequency_response",
+                                "type": "frequency_response", 
                                 "optimization_id": optimization_id,
-                                "step": step_number,
-                                "message": f"Frequency response calculated for {step_info}",
-                                "frequency_response": response_data,
+                                "step": response_step,
+                                "message": f"Frequency response calculated after step {response_step + 1}",
+                                "frequency_response": {
+                                    "frequencies": response_data["frequencies"],
+                                    "magnitude_db": response_data["magnitude_db"],
+                                    "phase_degrees": response_data.get("phase_degrees", [])
+                                },
                                 "timestamp": time.time()
                             }
-                    except (ValueError, json.JSONDecodeError) as e:
+                    except (ValueError, json.JSONDecodeError, KeyError) as e:
                         logger.warning(f"Could not parse frequency response data: {e}")
                         continue
                 
