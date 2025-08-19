@@ -19,16 +19,6 @@ pub struct CurvePoint {
     pub weight: Option<Weight>,
 }
 
-impl CurvePoint {
-    pub fn new(freq: f64, db: f64, weight: Option<Weight>) -> Self {
-        Self {
-            frequency: freq,
-            target_db: db,
-            weight,
-        }
-    }
-}
-
 /// Target curve definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TargetCurve {
@@ -171,60 +161,6 @@ impl BiquadFilter {
         }
     }
 
-    pub fn low_shelf(frequency: f64, q: f64, gain_db: f64, sample_rate: f64) -> Self {
-        let w0 = 2.0 * PI * frequency / sample_rate;
-        let cos_w0 = w0.cos();
-        let sin_w0 = w0.sin();
-        let a_factor = 10.0_f64.powf(gain_db / 40.0);
-        let beta = (a_factor / q).sqrt();
-
-        let b0 = a_factor * ((a_factor + 1.0) - (a_factor - 1.0) * cos_w0 + beta * sin_w0);
-        let b1 = 2.0 * a_factor * ((a_factor - 1.0) - (a_factor + 1.0) * cos_w0);
-        let b2 = a_factor * ((a_factor + 1.0) - (a_factor - 1.0) * cos_w0 - beta * sin_w0);
-        let a0 = (a_factor + 1.0) + (a_factor - 1.0) * cos_w0 + beta * sin_w0;
-        let a1 = -2.0 * ((a_factor - 1.0) + (a_factor + 1.0) * cos_w0);
-        let a2 = (a_factor + 1.0) + (a_factor - 1.0) * cos_w0 - beta * sin_w0;
-
-        Self {
-            filter_type: "ls".to_string(),
-            frequency,
-            q,
-            gain_db,
-            description: format!("Low shelf {:.1}Hz {:.1}dB", frequency, gain_db),
-            coefficients: BiquadCoefficients {
-                b: [b0, b1, b2],
-                a: [a0, a1, a2],
-            }
-        }
-    }
-
-    pub fn high_shelf(frequency: f64, q: f64, gain_db: f64, sample_rate: f64) -> Self {
-        let w0 = 2.0 * PI * frequency / sample_rate;
-        let cos_w0 = w0.cos();
-        let sin_w0 = w0.sin();
-        let a_factor = 10.0_f64.powf(gain_db / 40.0);
-        let beta = (a_factor / q).sqrt();
-
-        let b0 = a_factor * ((a_factor + 1.0) + (a_factor - 1.0) * cos_w0 + beta * sin_w0);
-        let b1 = -2.0 * a_factor * ((a_factor - 1.0) + (a_factor + 1.0) * cos_w0);
-        let b2 = a_factor * ((a_factor + 1.0) + (a_factor - 1.0) * cos_w0 - beta * sin_w0);
-        let a0 = (a_factor + 1.0) - (a_factor - 1.0) * cos_w0 + beta * sin_w0;
-        let a1 = 2.0 * ((a_factor - 1.0) - (a_factor + 1.0) * cos_w0);
-        let a2 = (a_factor + 1.0) - (a_factor - 1.0) * cos_w0 - beta * sin_w0;
-
-        Self {
-            filter_type: "hs".to_string(),
-            frequency,
-            q,
-            gain_db,
-            description: format!("High shelf {:.1}Hz {:.1}dB", frequency, gain_db),
-            coefficients: BiquadCoefficients {
-                b: [b0, b1, b2],
-                a: [a0, a1, a2],
-            }
-        }
-    }
-
     /// Calculate frequency response of this filter at given frequencies
     pub fn frequency_response(&self, frequencies: &[f64], sample_rate: f64) -> Vec<f64> {
         frequencies.iter().map(|&freq| {
@@ -248,8 +184,6 @@ impl BiquadFilter {
         match self.filter_type.as_str() {
             "hp" => format!("hp:{:.1}:{:.3}", self.frequency, self.q),
             "eq" => format!("eq:{:.1}:{:.3}:{:.2}", self.frequency, self.q, self.gain_db),
-            "ls" => format!("ls:{:.1}:{:.3}:{:.2}", self.frequency, self.q, self.gain_db),
-            "hs" => format!("hs:{:.1}:{:.3}:{:.2}", self.frequency, self.q, self.gain_db),
             _ => format!("coeff:{:.6}:{:.6}:{:.6}:{:.6}:{:.6}:{:.6}", 
                         self.coefficients.a[0], self.coefficients.a[1], self.coefficients.a[2],
                         self.coefficients.b[0], self.coefficients.b[1], self.coefficients.b[2]),
@@ -258,6 +192,7 @@ impl BiquadFilter {
 }
 
 /// Calculate cascaded frequency response of multiple filters
+#[allow(dead_code)]
 pub fn cascade_frequency_response(filters: &[BiquadFilter], frequencies: &[f64], sample_rate: f64) -> Vec<f64> {
     if filters.is_empty() {
         return vec![0.0; frequencies.len()];

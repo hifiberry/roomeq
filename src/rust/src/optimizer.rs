@@ -303,6 +303,7 @@ impl RoomEQOptimizer {
     }
 
     /// Calculate RMS error between measured and target responses
+    #[allow(dead_code)]
     pub fn calculate_error(&self, measured: &[f64], target: &[f64]) -> f64 {
         assert_eq!(measured.len(), target.len());
         
