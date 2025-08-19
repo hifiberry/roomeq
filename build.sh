@@ -1,10 +1,10 @@
 #!/bin/bash
 set -e
 
-# Clean Rust build artifacts before packaging
+# Clean Rust build artifacts before packaging (but preserve Cargo.lock)
 echo "Cleaning Rust build artifacts..."
 rm -rf src/rust/target/
-rm -f src/rust/Cargo.lock
+# Keep Cargo.lock to ensure reproducible builds with locked dependency versions
 
 # Ensure we have the keyring files
 if [ ! -f "hifiberry-archive-keyring.gpg" ]; then
