@@ -996,6 +996,25 @@ data: {"type": "frequency_response", "optimization_id": "abc12345", "step": 2, "
 data: {"type": "completed", "optimization_id": "abc12345", "step": 8, "message": "Optimization completed successfully", "result": {"success": true, "filters": [...], "filter_count": 8, "original_error": 8.5, "final_error": 1.9, "improvement_db": 6.6, "processing_time": 18.7, "final_frequency_response": {"frequencies": [...], "magnitude_db": [...], "phase_degrees": [...]}}, "progress": 100.0, "processing_time": 18.7, "timestamp": 1692123465.890}
 ```
 
+**Frequency Response Details:**
+The `frequency_response` events contain the calculated response of the current filter set:
+
+```json
+{
+  "type": "frequency_response",
+  "optimization_id": "abc12345", 
+  "step": 1,
+  "frequency_response": {
+    "frequencies": [20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000, 20000],
+    "magnitude_db": [0.1, 0.2, 0.4, 0.8, 1.2, 1.8, 2.5, 3.2, 4.1, 3.8, 3.2, 2.1, 1.2, 0.5, -0.2, -0.8, -1.5, -2.1, -2.8, -3.2, -3.8, -2.9, -1.8, -0.5, 0.8, 1.5, 2.2, 1.8, 1.2, 0.5],
+    "phase_degrees": [0.0, 5.2, 12.8, 18.4, 25.1, 32.7, 38.9, 45.2, 51.8, 58.3, 64.1, 69.7, 74.8, 79.2, 82.9, 85.1, 86.8, 87.2, 86.9, 85.8, 83.7, 80.9, 77.4, 73.2, 68.5, 63.1, 57.2, 50.8, 44.1, 37.0]
+  },
+  "timestamp": 1692123457.456
+}
+```
+
+**Important Note:** The frequency response always uses the exact same frequencies as provided in the input measurement data. If your input has 10 frequency points, the frequency response will have exactly 10 matching points. If your input has 31 points (like the curl example), the frequency response will have exactly 31 matching points. This ensures perfect alignment between the original measurement and the corrected response for accurate comparison.
+
 **Optimization Result Structure:**
 ```json
 {
@@ -1031,14 +1050,15 @@ data: {"type": "completed", "optimization_id": "abc12345", "step": 8, "message":
 - `started`: Optimization initialization
 - `initialization`: Usable frequency range detection
 - `filter_added`: New filter added to the solution with complete list of all filters accumulated so far
-- `frequency_response`: Frequency response calculated by Rust optimizer after each filter step
+- `frequency_response`: Frequency response calculated by Rust optimizer after each filter step using the same frequencies as the input measurement data
 - `completed`: Optimization finished successfully with final frequency response
 - `error`: Optimization failed with error message
 
 **Optimization Features:**
 - **High-Performance Rust Backend**: Fast optimization with intelligent frequency management
 - **Real-time Streaming**: Live progress updates without buffering
-- **Frequency Response Calculation**: Complete filter set and frequency response after each step
+- **Frequency Response Calculation**: Complete filter set and frequency response after each step, using the exact same frequencies as the input measurement data for accurate comparison
+- **Input Frequency Preservation**: Frequency response calculations match the input measurement frequencies exactly (no interpolation or additional frequency points)
 - **Frequency Deduplication**: Removes redundant frequency points for efficiency
 - **Adaptive High-pass**: Intelligent high-pass filter placement
 - **Usable Range Detection**: Automatically detects useful frequency range
