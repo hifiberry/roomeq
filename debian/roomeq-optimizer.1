@@ -1,6 +1,141 @@
 .TH ROOMEQ-OPTIMIZER 1 "August 2025" "roomeq 0.6.0" "User Commands"
 .SH NAME
-roomeq-optimizer \- High-performance Rust-based room EQ optimizer
+.TH ROOMEQ-OPTIMIZER 1 "August 2025" "roomeq 0.6.1" "Audio Processing"
+.SH NAME
+roomeq-optimizer \- High-performance Rust optimizer for room equalization
+
+.SH SYNOPSIS
+.B roomeq-optimizer
+.RI [ OPTIONS ]
+
+.SH DESCRIPTION
+.B roomeq-optimizer
+is a high-performance Rust implementation of the room equalization optimizer.
+It processes optimization jobs from stdin in JSON format and outputs results
+in either JSON or human-readable format.
+
+This optimizer provides 10-20x faster processing compared to the Python
+implementation while maintaining full algorithm compatibility.
+
+.SH OPTIONS
+.TP
+.B \-\-progress
+Output progress steps during optimization. Each step shows the current
+filters, corrected response, and residual error. Without this flag,
+only the final result is output.
+
+.TP
+.B \-\-result
+Output the final optimization result after completion. Can be combined
+with \-\-progress to show both steps and final result.
+
+.TP
+.B \-\-human\-readable
+Output human-readable text instead of JSON. This makes the output
+suitable for interactive use but harder to parse programmatically.
+
+.TP
+.B \-h, \-\-help
+Print help information and exit.
+
+.TP
+.B \-V, \-\-version
+Print version information and exit.
+
+.SH INPUT FORMAT
+The optimizer reads a JSON optimization job from stdin with the following structure:
+
+.nf
+{
+  "measured_curve": {
+    "frequencies": [20, 100, 1000, 10000, 20000],
+    "magnitudes": [-3, -1, 0, -2, -6]
+  },
+  "target_curve": {
+    "name": "Harman",
+    "description": "Harman target curve",
+    "expert": false,
+    "curve": [...]
+  },
+  "optimizer_params": {
+    "name": "Default",
+    "qmax": 10,
+    "maxdb": 12,
+    "mindb": -12,
+    "add_highpass": true
+  },
+  "sample_rate": 48000,
+  "filter_count": 10
+}
+.fi
+
+.SH OUTPUT FORMATS
+.SS JSON Output (default)
+Without \-\-human\-readable, all output is JSON for easy parsing:
+
+Progress steps (with \-\-progress):
+.nf
+{"step":1,"filters":[...],"residual_error":2.5,"message":"Added filter 1 at 1000Hz","progress_percent":10.0}
+.fi
+
+Final result (with \-\-result):
+.nf
+{"success":true,"filters":[...],"final_error":1.2,"original_error":3.8,"improvement_db":10.1,"processing_time_ms":150}
+.fi
+
+.SS Human-readable Output
+With \-\-human\-readable, output is formatted for human consumption:
+
+.nf
+Step 1: Added filter 1 at 1000Hz (3.2dB) (Error: 2.5 dB, Progress: 10.0%)
+  Added: PEQ 1000Hz Q=2.0 Gain=3.2dB
+
+=== OPTIMIZATION RESULTS ===
+Success: true
+Filters created: 5
+Original error: 3.80 dB RMS
+Final error: 1.20 dB RMS
+Improvement: 10.1 dB
+Processing time: 150 ms
+.fi
+
+.SH EXAMPLES
+.SS Basic optimization with JSON output
+.nf
+echo '{"measured_curve":...}' | roomeq-optimizer --result
+.fi
+
+.SS Interactive optimization with human-readable output
+.nf
+roomeq-optimizer --progress --result --human-readable < job.json
+.fi
+
+.SS Progress tracking only (useful for monitoring)
+.nf
+cat optimization.json | roomeq-optimizer --progress
+.fi
+
+.SS Silent operation (no output unless error)
+.nf
+roomeq-optimizer < job.json
+.fi
+
+.SH EXIT STATUS
+.TP
+.B 0
+Optimization completed successfully
+.TP
+.B 1
+Error occurred (invalid input, optimization failure, etc.)
+
+.SH SEE ALSO
+.BR roomeq-server (1),
+.BR rms-level (1)
+
+For complete examples and Python integration, see /usr/share/doc/roomeq/rust/examples/
+
+.SH AUTHOR
+HiFiBerry <support@hifiberry.com>
 .SH SYNOPSIS
 .B roomeq-optimizer
 < job_specification.json
