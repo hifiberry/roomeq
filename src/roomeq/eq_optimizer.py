@@ -34,7 +34,7 @@ from scipy import optimize
 from dataclasses import dataclass, asdict
 
 from .biquad import Biquad, filter_cascade_response
-from .eq_presets import OPTIMIZER_PRESETS, TARGET_CURVES
+from .presets import get_optimizer_preset, get_target_curve
 
 logger = logging.getLogger(__name__)
 
@@ -321,8 +321,8 @@ class RoomEQOptimizer:
         Args:
             frequencies: Frequency array from measurement
             magnitudes: Magnitude response in dB
-            target_curve: Target curve name from eq_presets
-            optimizer_preset: Optimizer preset name from eq_presets
+            target_curve: Target curve name from presets
+            optimizer_preset: Optimizer preset name from presets
             filter_count: Number of EQ filters to generate
             sample_rate: Audio sample rate
             intermediate_results_interval: Return intermediate results every n steps (0=disabled)
@@ -350,13 +350,12 @@ class RoomEQOptimizer:
             mag_array = np.array(magnitudes)
             
             # Get configuration
-            if target_curve not in TARGET_CURVES:
+            target_config = get_target_curve(target_curve)
+            if target_config is None:
                 raise ValueError(f"Unknown target curve: {target_curve}")
-            if optimizer_preset not in OPTIMIZER_PRESETS:
+            optimizer_params = get_optimizer_preset(optimizer_preset)
+            if optimizer_params is None:
                 raise ValueError(f"Unknown optimizer preset: {optimizer_preset}")
-            
-            target_config = TARGET_CURVES[target_curve]
-            optimizer_params = OPTIMIZER_PRESETS[optimizer_preset]
             
             # Step 2: Normalize and find usable range
             self.progress_reporter.report_step(OptimizationStep(

@@ -11,6 +11,7 @@ import wave
 import signal
 import sys
 import uuid
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -35,10 +36,10 @@ from .microphone import MicrophoneDetector, detect_microphones
 from .analysis import measure_spl
 from .signal_generator import SignalGenerator
 from .eq_optimizer import (
-    start_optimization, get_optimization_status, cancel_optimization,
-    get_optimization_result
+    generate_parametric_eq, generate_eq_filters, generate_target_response
 )
-from .eq_presets import list_target_curves, list_optimizer_presets
+from .rust_optimizer import optimize_with_rust, RustOptimizerError
+from .presets import list_target_curves, list_optimizer_presets
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -147,7 +148,7 @@ def validate_float_param(param_name: str, value: str, min_val: float = None, max
 def get_version():
     """Get API version information."""
     return jsonify({
-        "version": "0.6.0",
+        "version": "0.7.0",
         "api_name": "RoomEQ Audio Processing API",
         "features": [
             "Microphone detection with sensitivity and gain",
@@ -156,18 +157,22 @@ def get_version():
             "Audio recording with automatic cleanup",
             "Sine sweep generation",
             "White/pink noise generation",
-            "Automatic room EQ optimization with multiple target curves",
-            "Real-time optimization progress reporting",
+            "High-performance Rust-based room EQ optimization with real-time streaming",
+            "Frequency deduplication and intelligent candidate generation",
+            "Adaptive high-pass filter placement",
+            "Usable frequency range detection",
+            "Psychoacoustic weighting and error calculation",
             "Parametric EQ filter generation (biquad coefficients)",
             "Multiple optimizer presets with different smoothing characteristics",
-            "Scipy-based advanced optimization algorithms"
+            "Real-time streaming optimization progress (no buffering)"
         ],
         "server_info": {
             "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
             "flask_version": "2.x",
             "threading": "Multi-threaded request handling",
             "audio_backend": "ALSA with arecord fallback for compatibility",
-            "optimization_backend": "SciPy with least squares curve fitting"
+            "optimization_backend": "High-performance Rust optimizer with streaming output",
+            "rust_optimizer": "v0.6.0 with brute-force search and intelligent frequency management"
         }
     })
 
@@ -1083,195 +1088,130 @@ def eq_optimizers():
         abort(500, f"Failed to get optimizer presets: {str(e)}")
 
 
-@app.route("/eq/optimize/start", methods=["POST"])
-def eq_optimize_start():
-    """Start EQ optimization from FFT data or recording."""
-    try:
-        # Parse request data
-        if request.is_json:
-            data = request.get_json()
-        else:
-            data = {}
-        
-        # Get parameters
-        target_curve = data.get('target_curve', 'weighted_flat')
-        optimizer_preset = data.get('optimizer_preset', 'default')
-        filter_count = int(data.get('filter_count', 8))
-        sample_rate = float(data.get('sample_rate', 48000))
-        intermediate_results_interval = int(data.get('intermediate_results_interval', 0))
-        recording_id = data.get('recording_id')
-        
-        # Validate filter count
-        if not (1 <= filter_count <= 20):
-            abort(400, "filter_count must be between 1 and 20")
-        
-        # Validate intermediate results interval
-        if intermediate_results_interval < 0:
-            abort(400, "intermediate_results_interval must be >= 0")
-        
-        # Get frequency response data
-        frequencies = None
-        magnitudes = None
-        
-        if recording_id:
-            # Use recording for optimization
-            try:
-                # Get recording file path
-                recording_info = get_recording_status(recording_id)
-                if recording_info['status'] != 'completed':
-                    abort(400, f"Recording {recording_id} is not completed")
-                
-                # Analyze recording to get FFT data
-                file_path = recording_info.get('file_path')
-                if not file_path or not os.path.exists(file_path):
-                    abort(404, f"Recording file not found for {recording_id}")
-                
-                # Use default FFT analysis parameters
-                window_type = data.get('window', 'hann')
-                normalize = data.get('normalize', 1000.0)
-                points_per_octave = data.get('points_per_octave', 12)
-                
-                result = analyze_wav_file(
-                    file_path, window_type, None, None, None, 
-                    normalize, points_per_octave, None
-                )
-                
-                # Extract frequency response from log summary if available
-                if 'log_frequency_summary' in result and 'error' not in result['log_frequency_summary']:
-                    log_data = result['log_frequency_summary']
-                    frequencies = log_data['frequencies']
-                    magnitudes = log_data['magnitudes']
-                else:
-                    # Fallback to full resolution data
-                    frequencies = result['frequencies']
-                    magnitudes = result['magnitudes']
-                
-            except Exception as e:
-                logger.error(f"Error analyzing recording {recording_id}: {e}")
-                abort(500, f"Failed to analyze recording: {str(e)}")
-        
-        elif 'frequencies' in data and 'magnitudes' in data:
-            # Use provided FFT data
-            frequencies = data['frequencies']
-            magnitudes = data['magnitudes']
+@app.route("/eq/optimize", methods=["POST"])
+def eq_optimize():
+    """Run EQ optimization from FFT data or recording with streaming output."""
+    from flask import Response
+    
+    def generate_optimization_stream():
+        try:
+            # Parse request data
+            if request.is_json:
+                data = request.get_json()
+            else:
+                data = {}
             
-            if len(frequencies) != len(magnitudes):
-                abort(400, "frequencies and magnitudes arrays must have the same length")
+            # Get parameters
+            target_curve = data.get('target_curve', 'weighted_flat')
+            optimizer_preset = data.get('optimizer_preset', 'default')
+            filter_count = int(data.get('filter_count', 8))
+            sample_rate = float(data.get('sample_rate', 48000))
+            add_highpass = bool(data.get('add_highpass', True))
+            recording_id = data.get('recording_id')
+            
+            # Validate filter count
+            if not (1 <= filter_count <= 20):
+                yield f"data: {json.dumps({'error': 'filter_count must be between 1 and 20'})}\n\n"
+                return
+            
+            # Get frequency response data
+            frequencies = None
+            magnitudes = None
+            
+            if recording_id:
+                # Use recording for optimization
+                try:
+                    # Get recording file path
+                    recording_info = get_recording_status(recording_id)
+                    if recording_info['status'] != 'completed':
+                        yield f"data: {json.dumps({'error': f'Recording {recording_id} is not completed'})}\n\n"
+                        return
+                    
+                    # Analyze recording to get FFT data
+                    file_path = recording_info.get('filepath')
+                    if not file_path or not os.path.exists(file_path):
+                        yield f"data: {json.dumps({'error': f'Recording file not found for {recording_id}'})}\n\n"
+                        return
+                    
+                    # Use default FFT analysis parameters
+                    window_type = data.get('window', 'hann')
+                    normalize = data.get('normalize', 1000.0)
+                    points_per_octave = data.get('points_per_octave', 12)
+                    
+                    result = analyze_wav_file(
+                        file_path, window_type, None, None, None, 
+                        normalize, points_per_octave, None
+                    )
+                    
+                    # Extract frequency response from log summary if available
+                    if 'log_frequency_summary' in result.get('fft_analysis', {}) and 'error' not in result['fft_analysis']['log_frequency_summary']:
+                        log_data = result['fft_analysis']['log_frequency_summary']
+                        frequencies = log_data['frequencies']
+                        magnitudes = log_data['magnitudes']
+                    else:
+                        # Fallback to full resolution data
+                        fft_data = result['fft_analysis']
+                        frequencies = fft_data['frequencies']
+                        magnitudes = fft_data['magnitudes']
+                    
+                except Exception as e:
+                    logger.error(f"Error analyzing recording {recording_id}: {e}")
+                    yield f"data: {json.dumps({'error': f'Failed to analyze recording: {str(e)}'})}\n\n"
+                    return
+            
+            elif 'frequencies' in data and 'magnitudes' in data:
+                # Use provided FFT data
+                frequencies = data['frequencies']
+                magnitudes = data['magnitudes']
                 
-        else:
-            abort(400, "Either recording_id or frequencies/magnitudes data must be provided")
-        
-        # Validate frequency data
-        if not frequencies or not magnitudes:
-            abort(400, "No valid frequency response data found")
-        
-        if len(frequencies) < 10:
-            abort(400, "Insufficient frequency data points for optimization")
-        
-        # Start optimization
-        optimization_id = start_optimization(
-            frequencies=frequencies,
-            magnitudes=magnitudes,
-            target_curve=target_curve,
-            optimizer_preset=optimizer_preset,
-            filter_count=filter_count,
-            sample_rate=sample_rate,
-            intermediate_results_interval=intermediate_results_interval
-        )
-        
-        return jsonify({
-            "success": True,
-            "optimization_id": optimization_id,
-            "message": f"EQ optimization started with {len(frequencies)} frequency points",
-            "parameters": {
-                "target_curve": target_curve,
-                "optimizer_preset": optimizer_preset,
-                "filter_count": filter_count,
-                "sample_rate": sample_rate,
-                "intermediate_results_interval": intermediate_results_interval
-            }
-        })
-        
-    except Exception as e:
-        logger.error(f"Error starting EQ optimization: {e}")
-        abort(500, str(e))
-
-
-@app.route("/eq/optimize/status/<optimization_id>", methods=["GET"])
-def eq_optimize_status(optimization_id: str):
-    """Get status of running or completed optimization."""
-    try:
-        status = get_optimization_status(optimization_id)
-        
-        if status['status'] == 'not_found':
-            abort(404, f"Optimization {optimization_id} not found")
-        
-        return jsonify({
-            "success": True,
-            **status
-        })
-        
-    except Exception as e:
-        logger.error(f"Error getting optimization status: {e}")
-        abort(500, str(e))
-
-
-@app.route("/eq/optimize/cancel/<optimization_id>", methods=["POST"])
-def eq_optimize_cancel(optimization_id: str):
-    """Cancel a running optimization."""
-    try:
-        cancelled = cancel_optimization(optimization_id)
-        
-        if not cancelled:
-            abort(404, f"Optimization {optimization_id} not found or not running")
-        
-        return jsonify({
-            "success": True,
-            "message": f"Optimization {optimization_id} cancelled",
-            "optimization_id": optimization_id
-        })
-        
-    except Exception as e:
-        logger.error(f"Error cancelling optimization: {e}")
-        abort(500, str(e))
-
-
-@app.route("/eq/optimize/result/<optimization_id>", methods=["GET"])
-def eq_optimize_result(optimization_id: str):
-    """Get completed optimization result."""
-    try:
-        result = get_optimization_result(optimization_id)
-        
-        if result is None:
-            abort(404, f"Optimization result {optimization_id} not found")
-        
-        # Convert dataclass to dict for JSON serialization with special handling for nested results
-        from dataclasses import asdict
-        result_dict = asdict(result)
-        
-        # Handle intermediate_results serialization (nested OptimizationResult objects)
-        if result_dict.get('intermediate_results'):
-            intermediate_serialized = []
-            for intermediate in result_dict['intermediate_results']:
-                # Extract key fields from intermediate results for cleaner API response
-                intermediate_clean = {
-                    'step': len(intermediate.get('filters', [])),
-                    'filters': intermediate.get('filters', []),
-                    'improvement_db': intermediate.get('improvement_db', 0.0),
-                    'rms_error': intermediate.get('final_error', 0.0),
-                    'processing_time': intermediate.get('processing_time', 0.0)
-                }
-                intermediate_serialized.append(intermediate_clean)
-            result_dict['intermediate_results'] = intermediate_serialized
-        
-        return jsonify({
-            "success": True,
-            "result": result_dict
-        })
-        
-    except Exception as e:
-        logger.error(f"Error getting optimization result: {e}")
-        abort(500, str(e))
+                if len(frequencies) != len(magnitudes):
+                    yield f"data: {json.dumps({'error': 'frequencies and magnitudes arrays must have the same length'})}\n\n"
+                    return
+                    
+            else:
+                yield f"data: {json.dumps({'error': 'Either recording_id or frequencies/magnitudes data must be provided'})}\n\n"
+                return
+            
+            # Validate frequency data
+            if not frequencies or not magnitudes:
+                yield f"data: {json.dumps({'error': 'No valid frequency response data found'})}\n\n"
+                return
+            
+            if len(frequencies) < 10:
+                yield f"data: {json.dumps({'error': 'Insufficient frequency data points for optimization'})}\n\n"
+                return
+            
+            # Send initial status
+            yield f"data: {json.dumps({'type': 'started', 'message': f'Starting optimization with {len(frequencies)} frequency points', 'parameters': {'target_curve': target_curve, 'optimizer_preset': optimizer_preset, 'filter_count': filter_count, 'sample_rate': sample_rate, 'add_highpass': add_highpass}})}\n\n"
+            
+            # Run optimization with streaming output
+            for step in optimize_with_rust(
+                frequencies=frequencies,
+                magnitudes=magnitudes,
+                target_curve=target_curve,
+                optimizer_preset=optimizer_preset,
+                filter_count=filter_count,
+                sample_rate=sample_rate,
+                add_highpass=add_highpass
+            ):
+                yield f"data: {json.dumps(step)}\n\n"
+                
+        except RustOptimizerError as e:
+            logger.error(f"Rust optimizer error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+        except Exception as e:
+            logger.error(f"Error in optimization stream: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'error': f'Optimization failed: {str(e)}'})}\n\n"
+    
+    return Response(
+        generate_optimization_stream(),
+        mimetype='text/plain',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Content-Type-Options': 'nosniff'
+        }
+    )
 
 
 @app.route("/", methods=["GET"])
@@ -1334,11 +1274,8 @@ def root():
             },
             "eq_optimization": {
                 "/eq/presets/targets": "List available target response curves",
-                "/eq/presets/optimizers": "List available optimizer configurations",
-                "/eq/optimize/start": "Start EQ optimization from recording or FFT data",
-                "/eq/optimize/status/<optimization_id>": "Get real-time optimization progress",
-                "/eq/optimize/cancel/<optimization_id>": "Cancel running optimization",
-                "/eq/optimize/result/<optimization_id>": "Get optimization results and EQ filters"
+                "/eq/presets/optimizers": "List available optimizer configurations", 
+                "/eq/optimize": "Run EQ optimization with streaming results (no start/stop needed)"
             }
         },
         "usage_examples": {
@@ -1472,13 +1409,14 @@ def root():
                 "status": "curl -X GET http://localhost:10315/audio/noise/status"
             },
             "eq_optimization": {
-                "description": "Automatic room EQ optimization with real-time progress reporting",
+                "description": "Automatic room EQ optimization with real-time streaming progress",
                 "list_targets": "curl -X GET http://localhost:10315/eq/presets/targets",
                 "list_optimizers": "curl -X GET http://localhost:10315/eq/presets/optimizers",
-                "start_from_recording": {
+                "optimize_from_recording": {
                     "method": "POST",
-                    "url": "/eq/optimize/start",
-                    "example": "curl -X POST http://localhost:10315/eq/optimize/start -H 'Content-Type: application/json' -d '{\"recording_id\":\"abc12345\",\"target_curve\":\"weighted_flat\",\"optimizer_preset\":\"default\",\"filter_count\":8}'",
+                    "url": "/eq/optimize",
+                    "example": "curl -X POST http://localhost:10315/eq/optimize -H 'Content-Type: application/json' -d '{\"recording_id\":\"abc12345\",\"target_curve\":\"weighted_flat\",\"optimizer_preset\":\"default\",\"filter_count\":8}'",
+                    "response": "Server-Sent Events stream with real-time progress and final results",
                     "parameters": {
                         "recording_id": "ID of completed recording to analyze",
                         "target_curve": "Target response curve (weighted_flat, flat, falling_slope, room_only, harman, vocal_presence)",
@@ -1488,10 +1426,11 @@ def root():
                         "points_per_octave": "Frequency resolution for optimization (1-100, default: 12)"
                     }
                 },
-                "start_from_fft": {
+                "optimize_from_fft": {
                     "method": "POST", 
-                    "url": "/eq/optimize/start",
-                    "example": "curl -X POST http://localhost:10315/eq/optimize/start -H 'Content-Type: application/json' -d '{\"frequencies\":[20,25,31.5,...],\"magnitudes\":[-5.2,-3.1,-2.8,...],\"target_curve\":\"harman\",\"filter_count\":6}'",
+                    "url": "/eq/optimize",
+                    "example": "curl -X POST http://localhost:10315/eq/optimize -H 'Content-Type: application/json' -d '{\"frequencies\":[20,25,31.5,...],\"magnitudes\":[-5.2,-3.1,-2.8,...],\"target_curve\":\"harman\",\"filter_count\":6}'",
+                    "response": "Server-Sent Events stream with real-time progress and final results",
                     "parameters": {
                         "frequencies": "Array of frequency values in Hz",
                         "magnitudes": "Array of magnitude values in dB (same length as frequencies)",
@@ -1500,10 +1439,7 @@ def root():
                         "filter_count": "Number of filters to generate",
                         "sample_rate": "Audio sample rate (default: 48000)"
                     }
-                },
-                "check_status": "curl -X GET http://localhost:10315/eq/optimize/status/optimization_id_12345",
-                "cancel": "curl -X POST http://localhost:10315/eq/optimize/cancel/optimization_id_12345",
-                "get_result": "curl -X GET http://localhost:10315/eq/optimize/result/optimization_id_12345"
+                }
             }
         },
         "response_formats": {
@@ -1702,12 +1638,15 @@ def root():
                         }
                     }
                 },
+                "optimization_streaming": {
+                    "description": "Real-time Server-Sent Events stream for EQ optimization",
+                    "content_type": "text/event-stream",
+                    "progress_example": "data: {\"type\": \"progress\", \"message\": \"Optimization progress: 25/100 iterations\", \"progress\": 25, \"max_progress\": 100, \"current_error\": 3.8}\n\n",
+                    "result_example": "data: {\"type\": \"result\", \"message\": \"Optimization completed successfully\", \"result\": {\"target_curve\": \"weighted_flat\", \"optimizer_preset\": \"default\", \"processing_time\": 18.7, \"final_rms_error\": 2.1, \"improvement_db\": 8.3, \"filters\": [...], \"frequency_response\": {...}}}\n\n"
+                },
                 "optimization_result": {
-                    "description": "Complete EQ optimization results with generated filters",
+                    "description": "Complete EQ optimization results (delivered via streaming)",
                     "example": {
-                        "optimization_id": "opt_abc12345",
-                        "status": "completed",
-                        "success": True,
                         "target_curve": "weighted_flat",
                         "optimizer_preset": "default",
                         "processing_time": 18.7,
