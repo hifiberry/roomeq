@@ -1697,7 +1697,7 @@ def root():
             "playback_monitoring": "Real-time status tracking with automatic timeout",
             "fft_analysis": "FFT with windowing functions, normalization, and logarithmic frequency summarization",
             "frequency_summarization": "Logarithmic frequency buckets with configurable points per octave (1-100)",
-            "eq_optimization": "Scipy-based least squares optimization with multiple target curves and real-time progress reporting",
+            "eq_optimization": "Rust-based high-performance optimization with multiple target curves, real-time progress reporting, and frequency response calculation",
             "eq_filters": "Biquad parametric EQ filters with peaking, high-pass, low-shelf, and high-shelf types",
             "optimization_algorithms": "Advanced curve fitting with psychoacoustic smoothing and frequency-weighted error minimization",
             "cors_support": "Cross-origin requests enabled for web applications"

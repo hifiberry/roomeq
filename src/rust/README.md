@@ -195,7 +195,7 @@ for step in steps:
 
 The Rust implementation provides significant performance improvements:
 
-- **~10-50x faster** than Python scipy-based optimizer
+- **High performance** room EQ optimization
 - **Low memory usage** through efficient data structures  
 - **Real-time capable** for live audio processing
 - **Parallel optimization** potential for multiple channels

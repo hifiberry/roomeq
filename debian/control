@@ -2,19 +2,19 @@ Source: roomeq
 Section: sound
 Priority: optional
 Maintainer: HiFiBerry <support@hifiberry.com>
-Build-Depends: debhelper-compat (= 13), dh-python, python3, python3-setuptools, python3-flask, python3-flask-cors, python3-numpy, python3-scipy, python3-alsaaudio, curl
+Build-Depends: debhelper-compat (= 13), dh-python, python3, python3-setuptools, python3-flask, python3-flask-cors, python3-numpy, python3-alsaaudio, curl
 Standards-Version: 4.5.0
 Homepage: https://github.com/hifiberry/roomeq
 
 Package: roomeq
 Architecture: any
-Depends: python3, python3-flask, python3-flask-cors, python3-numpy, python3-scipy, python3-alsaaudio, ${python3:Depends}, ${misc:Depends}
+Depends: python3, python3-flask, python3-flask-cors, python3-numpy, python3-alsaaudio, ${python3:Depends}, ${misc:Depends}
 Description: Room equalization REST API with high-performance Rust optimizer
  A comprehensive REST API for audio measurements including microphone
  detection, SPL measurement, signal generation, and advanced room EQ
- optimization. Features scipy-based optimization algorithms with real-time
- progress reporting, multiple target curves, and biquad filter generation.
+ optimization. Features a high-performance Rust-based optimizer with real-time
+ progress reporting, frequency response calculation, multiple target curves,
+ and biquad filter generation.
  .
- Includes a high-performance Rust-based optimizer (roomeq-optimizer) that
- provides 10-20x faster processing compared to the Python implementation
- while maintaining full algorithm compatibility.
+ The Rust optimizer (roomeq-optimizer) provides streaming output of
+ optimization progress and frequency response data after each filter step.

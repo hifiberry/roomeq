@@ -77,9 +77,9 @@ The RoomEQ Audio Processing API provides a comprehensive REST interface for micr
 - **Multiple Sweep Support**: Generate consecutive sine sweeps for acoustic averaging
 - **Audio Recording**: Background recording to WAV files with secure file management
 - **FFT Analysis**: Comprehensive spectral analysis with windowing functions, normalization, and logarithmic frequency summarization
-- **🆕 EQ Optimization**: Automatic room EQ optimization with multiple target curves and real-time progress reporting
-- **🆕 Biquad Filter Generation**: Generate parametric EQ filters with complete coefficient sets
-- **🆕 Advanced Optimization**: Scipy-based least squares optimization with psychoacoustic smoothing
+- **EQ Optimization**: Automatic room EQ optimization with multiple target curves and real-time progress reporting
+- **Biquad Filter Generation**: Generate parametric EQ filters with complete coefficient sets
+- **Advanced Optimization**: Rust-based high-performance optimization with frequency response calculation
 - **Real-time Control**: Start, stop, extend, and monitor operations through REST endpoints
 - **Cross-Origin Support**: CORS enabled for web application integration
 
@@ -152,14 +152,14 @@ curl -X GET http://localhost:10315/version
     "Real-time optimization progress reporting",
     "Parametric EQ filter generation (biquad coefficients)",
     "Multiple optimizer presets with different smoothing characteristics",
-    "Scipy-based advanced optimization algorithms"
+    "Rust-based high-performance optimization algorithms"
   ],
   "server_info": {
     "python_version": "3.11.2",
     "flask_version": "2.x",
     "threading": "Multi-threaded request handling",
     "audio_backend": "ALSA with arecord fallback for compatibility",
-    "optimization_backend": "SciPy with least squares curve fitting"
+    "optimization_backend": "Rust optimizer with least squares curve fitting and real-time frequency response"
   }
 }
 ```
@@ -741,7 +741,7 @@ Perform FFT analysis on a specific recording by ID.
 
 ## EQ Optimization
 
-The API provides advanced room EQ optimization functionality with real-time progress reporting. The optimization system uses scipy-based algorithms to generate parametric EQ filters that correct room response to match target curves.
+The API provides advanced room EQ optimization functionality with real-time progress reporting. The optimization system uses a high-performance Rust-based optimizer to generate parametric EQ filters that correct room response to match target curves.
 
 ### Target Curves and Optimizer Presets
 
