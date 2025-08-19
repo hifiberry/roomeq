@@ -757,51 +757,60 @@ curl -X GET http://localhost:10315/eq/presets/targets
 ```json
 {
   "success": true,
+  "count": 6,
   "target_curves": [
     {
-      "key": "room_only",
-      "name": "Room Correction Only",
-      "description": "Focus correction on room modes (low frequencies up to 250Hz)",
-      "expert": false,
-      "curve": [[20, 0, [1, 0.5]], [250, 0]]
-    },
-    {
-      "key": "flat", 
+      "key": "flat",
       "name": "Flat Response",
-      "description": "Flat frequency response across all frequencies",
+      "description": "Perfectly flat frequency response (0 dB across all frequencies)",
       "expert": false,
-      "curve": [[20, 0], [25000, 0]]
-    },
-    {
-      "key": "falling_slope",
-      "name": "Falling Slope", 
-      "description": "Gentle high-frequency roll-off for warmer sound",
-      "expert": false,
-      "curve": [[20, 0, [1, 0.3]], [100, 0, [1, 0.6]], [200, 0, [0.9, 0.7]], [500, 0, [0.9, 0.5]], [1000, 0, [0.5, 0.3]], [10000, -3, 0.1], [25000, -6]]
-    },
-    {
-      "key": "weighted_flat",
-      "name": "Weighted Flat",
-      "description": "Flat response with frequency-dependent correction weights", 
-      "expert": true,
-      "curve": [[20, 0, [1, 0.3]], [100, 0, [1, 0.6]], [200, 0, [0.9, 0.7]], [500, 0, 0.6], [5000, 0, 0.4], [10000, 0, 0.1], [25000, 0]]
+      "curve": [
+        {"frequency": 20.0, "target_db": 0.0, "weight": null},
+        {"frequency": 25000.0, "target_db": 0.0, "weight": null}
+      ]
     },
     {
       "key": "harman",
-      "name": "Harman Curve",
-      "description": "Harman research target curve for speakers",
-      "expert": true, 
-      "curve": [[20, -2, [0.8, 0.4]], [100, 0, [1, 0.7]], [200, 0, [1, 0.8]], [500, 0, [0.9, 0.7]], [1000, 0, [0.7, 0.5]], [3000, -1, [0.6, 0.4]], [10000, -3, [0.3, 0.2]], [20000, -5, [0.1, 0.1]]]
+      "name": "Harman Target Curve",
+      "description": "Research-based preferred room response with gentle high-frequency roll-off",
+      "expert": true,
+      "curve": [
+        {"frequency": 20.0, "target_db": 0.0, "weight": 0.8},
+        {"frequency": 100.0, "target_db": 0.0, "weight": 1.0},
+        {"frequency": 1000.0, "target_db": 0.0, "weight": 1.0},
+        {"frequency": 10000.0, "target_db": -1.0, "weight": 0.5},
+        {"frequency": 20000.0, "target_db": -2.0, "weight": 0.3}
+      ]
     },
     {
-      "key": "vocal_presence",
-      "name": "Vocal Presence", 
-      "description": "Enhanced midrange for vocal clarity",
-      "expert": true,
-      "curve": [[20, -2, [0.5, 0.3]], [100, -1, [0.7, 0.5]], [200, 0, [0.9, 0.7]], [500, 0, [1, 0.8]], [1000, 1, [1, 0.9]], [3000, 2, [1, 0.8]], [5000, 0, [0.8, 0.6]], [10000, -2, [0.4, 0.3]], [20000, -4, [0.2, 0.1]]]
+      "key": "falling_slope",
+      "name": "Falling Slope",
+      "description": "Gentle downward slope for warmer sound",
+      "expert": false,
+      "curve": [
+        {"frequency": 20.0, "target_db": 2.0, "weight": 0.6},
+        {"frequency": 100.0, "target_db": 1.0, "weight": 0.8},
+        {"frequency": 1000.0, "target_db": 0.0, "weight": 1.0},
+        {"frequency": 10000.0, "target_db": -2.0, "weight": 0.6},
+        {"frequency": 20000.0, "target_db": -4.0, "weight": 0.3}
+      ]
     }
   ]
 }
+```
+
+**Curve Data Structure:**
+Each curve point contains:
+- `frequency`: Frequency in Hz
+- `target_db`: Target gain/attenuation in dB at this frequency
+- `weight`: Optimization weight (null = default, number = custom weight, array = [freq_weight, magnitude_weight])
+
+**Field Descriptions:**
+- `key`: Unique identifier for the target curve
+- `name`: Human-readable name
+- `description`: Detailed description of the curve characteristics
+- `expert`: Boolean indicating if this is an advanced/expert curve
+- `curve`: Array of frequency/target/weight points defining the target response
 ```
 
 #### GET `/eq/presets/optimizers`
@@ -816,59 +825,81 @@ curl -X GET http://localhost:10315/eq/presets/optimizers
 ```json
 {
   "success": true,
+  "count": 6,
   "optimizer_presets": [
     {
       "key": "default",
       "preset": "default",
       "name": "Default",
-      "description": "Balanced optimization with moderate Q values",
-      "qmax": 10,
-      "mindb": -10,
-      "maxdb": 3,
+      "description": "Balanced optimization with moderate Q values - recommended for most applications",
+      "qmax": 10.0,
+      "mindb": -10.0,
+      "maxdb": 3.0,
+      "add_highpass": true
+    },
+    {
+      "key": "smooth",
+      "preset": "smooth",
+      "name": "Smooth",
+      "description": "Moderate corrections with lower Q values - forgiving of measurement errors",
+      "qmax": 5.0,
+      "mindb": -8.0,
+      "maxdb": 2.0,
       "add_highpass": true
     },
     {
       "key": "verysmooth", 
       "preset": "verysmooth",
       "name": "Very Smooth",
-      "description": "Gentle correction with low Q values",
-      "qmax": 2,
-      "mindb": -10,
-      "maxdb": 3,
-      "add_highpass": true
-    },
-    {
-      "key": "smooth",
-      "preset": "smooth", 
-      "name": "Smooth",
-      "description": "Moderate correction with medium Q values",
-      "qmax": 5,
-      "mindb": -10,
-      "maxdb": 3,
+      "description": "Gentle corrections with very low Q values - minimal risk of artifacts",
+      "qmax": 2.0,
+      "mindb": -8.0,
+      "maxdb": 2.0,
       "add_highpass": true
     },
     {
       "key": "aggressive",
       "preset": "aggressive",
       "name": "Aggressive",
-      "description": "Strong correction with high Q values",
-      "qmax": 20,
-      "mindb": -20,
-      "maxdb": 6,
+      "description": "Strong corrections with high Q values - requires accurate measurements",
+      "qmax": 15.0,
+      "mindb": -15.0,
+      "maxdb": 5.0,
       "add_highpass": true
     },
     {
       "key": "precise",
       "preset": "precise",
       "name": "Precise",
-      "description": "High precision correction for detailed tuning",
-      "qmax": 15,
-      "mindb": -15,
-      "maxdb": 5,
+      "description": "Maximum precision with highest Q values - for expert use with excellent measurements",
+      "qmax": 20.0,
+      "mindb": -20.0,
+      "maxdb": 6.0,
+      "add_highpass": true
+    },
+    {
+      "key": "no_highpass",
+      "preset": "no_highpass",
+      "name": "No High-Pass",
+      "description": "Default settings without automatic high-pass filter",
+      "qmax": 10.0,
+      "mindb": -10.0,
+      "maxdb": 3.0,
       "add_highpass": false
     }
   ]
 }
+```
+
+**Field Descriptions:**
+- `key`: Unique identifier for the optimizer preset
+- `preset`: Preset identifier (same as key)
+- `name`: Human-readable name
+- `description`: Detailed description of the optimization behavior
+- `qmax`: Maximum Q factor allowed for filters
+- `mindb`: Minimum gain reduction allowed (negative value)
+- `maxdb`: Maximum gain boost allowed (positive value)
+- `add_highpass`: Whether to automatically add a high-pass filter
 ```
 
 ### EQ Optimization Process

@@ -150,23 +150,27 @@ OPTIMIZER_PRESETS = {
 
 def list_target_curves():
     """Get list of available target curves with metadata."""
-    return {name: {
+    return [{
+        "key": name,
         "name": curve["name"],
         "description": curve["description"],
         "expert": curve.get("expert", False),
-        "curve_points": len(curve["curve"])
-    } for name, curve in TARGET_CURVES.items()}
+        "curve": curve["curve"]
+    } for name, curve in TARGET_CURVES.items()]
 
 
 def list_optimizer_presets():
     """Get list of available optimizer presets with metadata."""
-    return {name: {
+    return [{
+        "key": name,
+        "preset": name,
         "name": preset["name"],
         "description": preset["description"],
         "qmax": preset["qmax"],
-        "gain_range": f"{preset['mindb']} to +{preset['maxdb']} dB",
+        "mindb": preset["mindb"],
+        "maxdb": preset["maxdb"],
         "add_highpass": preset["add_highpass"]
-    } for name, preset in OPTIMIZER_PRESETS.items()}
+    } for name, preset in OPTIMIZER_PRESETS.items()]
 
 
 def get_target_curve(name: str) -> Dict[str, Any]:
