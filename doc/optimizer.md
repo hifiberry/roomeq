@@ -150,7 +150,8 @@ Exhaustive search for optimal filter parameters:
   "qmax": 10.0,
   "mindb": -10.0,
   "maxdb": 3.0,
-  "add_highpass": true
+  "add_highpass": true,
+  "acceptable_error": 1.0
 }
 ```
 - **Use Case**: General-purpose room correction
@@ -163,7 +164,8 @@ Exhaustive search for optimal filter parameters:
   "qmax": 5.0,
   "mindb": -8.0,
   "maxdb": 2.0,
-  "add_highpass": true
+  "add_highpass": true,
+  "acceptable_error": 1.0
 }
 ```
 - **Use Case**: Gentle correction, vintage systems
@@ -176,12 +178,30 @@ Exhaustive search for optimal filter parameters:
   "qmax": 15.0,
   "mindb": -15.0,
   "maxdb": 5.0,
-  "add_highpass": true
+  "add_highpass": true,
+  "acceptable_error": 1.0
 }
 ```
 - **Use Case**: Severe room problems, high-resolution systems
 - **Characteristics**: Higher Q (narrower corrections), extended gain range
 - **Caution**: May cause ringing, requires accurate measurements
+
+#### Acceptable Error Parameter
+
+**`acceptable_error`** (default: 1.0 dB):
+- **Purpose**: Defines the error threshold below which corrections are not considered significant
+- **Algorithm**: `adjusted_error = max(0, |raw_error| - acceptable_error)` with sign preservation
+- **Effect**: 
+  - Errors ≤ 1.0 dB are treated as 0 (no correction needed)
+  - Error of +2.5 dB becomes +1.5 dB in optimization calculations  
+  - Error of -0.5 dB becomes 0 dB (within acceptable range)
+- **Benefits**:
+  - Prevents over-correction of minor deviations
+  - Focuses optimization on significant problems
+  - Reduces unnecessary filter usage for small errors
+- **Tuning**:
+  - **Lower values** (0.5 dB): More aggressive correction, targets smaller errors
+  - **Higher values** (2.0 dB): More forgiving, only corrects major problems
 
 ### Filter Count Guidelines
 
@@ -262,16 +282,28 @@ When `add_highpass: true`:
 
 ### Error Calculation Algorithm
 
-**Weighted RMS Error**:
+**Weighted RMS Error with Acceptable Threshold**:
 ```
-error = sqrt(Σ(w_freq[i] * w_dir[i] * (measured[i] - target[i])²) / N)
+adjusted_error[i] = {
+  0                           if |raw_error[i]| ≤ acceptable_error
+  raw_error[i] - acceptable_error  if raw_error[i] > acceptable_error  
+  raw_error[i] + acceptable_error  if raw_error[i] < -acceptable_error
+}
+
+final_error = sqrt(Σ(w_freq[i] * w_dir[i] * adjusted_error[i]²) / N)
 ```
 
 **Components**:
+- `raw_error[i] = measured[i] - target[i]`
+- `acceptable_error`: Threshold below which errors are not penalized (default: 1.0 dB)
 - `w_freq[i]`: Frequency-dependent weight
 - `w_dir[i]`: Direction-dependent weight (boost vs cut)
-- `measured[i]`: Current response at frequency i
-- `target[i]`: Target response at frequency i
+- `adjusted_error[i]`: Error after applying acceptable threshold
+
+**Example with acceptable_error = 1.0 dB**:
+- Raw error +2.5 dB → Adjusted error +1.5 dB (penalized for excess)
+- Raw error +0.8 dB → Adjusted error 0.0 dB (within acceptable range)  
+- Raw error -2.0 dB → Adjusted error -1.0 dB (penalized for excess cut)
 
 ### Filter Response Calculation
 
