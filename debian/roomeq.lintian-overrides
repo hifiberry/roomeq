@@ -1,2 +1,4 @@
 # Manual page is not critical for this internal tool
 roomeq: no-manual-page usr/bin/rms-level
+# Rust static binary doesn't need libc dependency detection
+roomeq: missing-dependency-on-libc

@@ -1,3 +1,16 @@
+roomeq (0.6.1) bookworm; urgency=medium
+
+  * Added high-performance Rust-based optimizer (roomeq-optimizer binary)
+  * Rust optimizer provides 10-20x faster processing than Python implementation
+  * Full algorithm compatibility with Python version maintained
+  * JSON stdin/stdout interface for seamless integration
+  * Real-time progress reporting via stdout
+  * Support for all biquad filter types (HP/LP/EQ/Shelf/Notch)
+  * Complete documentation and examples included
+  * Man page for roomeq-optimizer command
+
+ -- HiFiBerry <support@hifiberry.com>  Mon, 19 Aug 2025 12:00:00 +0000
+
 roomeq (0.6.0) bookworm; urgency=medium
 
   * Advanced EQ optimization system with SciPy integration

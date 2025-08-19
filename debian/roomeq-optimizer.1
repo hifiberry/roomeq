@@ -1,0 +1,97 @@
+.TH ROOMEQ-OPTIMIZER 1 "August 2025" "roomeq 0.6.0" "User Commands"
+.SH NAME
+roomeq-optimizer \- High-performance Rust-based room EQ optimizer
+.SH SYNOPSIS
+.B roomeq-optimizer
+< job_specification.json
+.SH DESCRIPTION
+.PP
+roomeq-optimizer is a high-performance Rust implementation of the room equalization
+optimizer. It provides 10-20x faster processing compared to the Python implementation
+while maintaining full compatibility with the same algorithms and filter types.
+.PP
+The optimizer reads a JSON job specification from stdin and outputs real-time
+progress information to stdout, with a final summary sent to stderr.
+.SH INPUT FORMAT
+The input JSON specification must contain:
+.IP \(bu 2
+measured_curve: Frequency response measurements
+.IP \(bu 2
+target_curve: Desired frequency response with weighting
+.IP \(bu 2
+optimizer_params: Optimization parameters (Q factors, gain limits, etc.)
+.IP \(bu 2
+sample_rate: Audio sample rate (typically 48000)
+.IP \(bu 2
+filter_count: Maximum number of filters to create
+.SH OUTPUT FORMAT
+.SS Stdout (Real-time Progress)
+JSON objects describing each optimization step:
+.IP \(bu 2
+step: Step number
+.IP \(bu 2
+filters: Current filter chain
+.IP \(bu 2
+corrected_response: Frequency response after correction
+.IP \(bu 2
+residual_error: Current RMS error in dB
+.IP \(bu 2
+message: Human-readable step description
+.IP \(bu 2
+progress_percent: Completion percentage
+.SS Stderr (Final Summary)
+Summary statistics including:
+.IP \(bu 2
+Success status
+.IP \(bu 2
+Total filters created
+.IP \(bu 2
+Original vs final error
+.IP \(bu 2
+Processing time
+.SH FILTER TYPES
+Supports all standard biquad filter types:
+.IP \(bu 2
+High-pass (hp): Subsonic filtering
+.IP \(bu 2
+Low-pass (lp): Anti-aliasing
+.IP \(bu 2
+Peaking EQ (eq): Precise frequency correction
+.IP \(bu 2
+Low shelf (ls): Bass region adjustment
+.IP \(bu 2
+High shelf (hs): Treble region adjustment
+.IP \(bu 2
+Notch: Narrow problem frequency removal
+.SH PERFORMANCE
+.IP \(bu 2
+Processing time: 1-10ms typical (vs 50-200ms Python)
+.IP \(bu 2
+Memory usage: ~2MB (vs ~50MB Python)
+.IP \(bu 2
+Same accuracy as Python implementation
+.SH EXAMPLES
+.PP
+Basic usage with example job:
+.IP
+cat /usr/share/doc/roomeq/rust/examples/example_job.json | roomeq-optimizer
+.PP
+Integration from Python:
+.IP
+python3 /usr/share/doc/roomeq/rust/examples/demo_rust_optimizer.py
+.SH FILES
+.IP /usr/bin/roomeq-optimizer
+Main executable
+.IP /usr/share/doc/roomeq/rust/README.md
+Detailed documentation
+.IP /usr/share/doc/roomeq/rust/examples/example_job.json
+Sample input specification
+.IP /usr/share/doc/roomeq/rust/examples/demo_rust_optimizer.py
+Python integration example
+.SH SEE ALSO
+.BR roomeq-server (1)
+.SH AUTHOR
+HiFiBerry <support@hifiberry.com>
+.SH COPYRIGHT
+Copyright (C) 2025 HiFiBerry. This is free software; see the source for
+copying conditions.
