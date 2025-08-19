@@ -25,7 +25,7 @@ A comprehensive audio processing system for acoustic measurement, room correctio
 ### Installation
 ```bash
 # Install dependencies
-sudo apt install python3-alsaaudio python3-numpy python3-scipy python3-flask python3-flask-cors
+sudo apt install python3-alsaaudio python3-numpy python3-flask python3-flask-cors
 
 # Start the server
 python3 start_server.py
