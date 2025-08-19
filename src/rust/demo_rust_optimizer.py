@@ -134,7 +134,13 @@ def create_optimization_job(
         "filter_count": filter_count
     }
 
-def run_rust_optimizer(job: Dict[str, Any], rust_binary_path: str = "./target/release/roomeq-optimizer") -> List[Dict[str, Any]]:
+def run_rust_optimizer(
+    job: Dict[str, Any], 
+    rust_binary_path: str = "./target/release/roomeq-optimizer",
+    show_progress: bool = True,
+    show_result: bool = True,
+    human_readable: bool = False
+) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
     """Run the Rust optimizer and collect step outputs."""
     
     # Convert job to JSON
@@ -145,12 +151,22 @@ def run_rust_optimizer(job: Dict[str, Any], rust_binary_path: str = "./target/re
     print(f"   Preset: {job['optimizer_params']['name']}")
     print(f"   Filters: {job['filter_count']}")
     print(f"   Sample rate: {job['sample_rate']}Hz")
+    print(f"   Progress: {show_progress}, Result: {show_result}, Human-readable: {human_readable}")
     print()
+    
+    # Build command line arguments
+    cmd = [rust_binary_path]
+    if show_progress:
+        cmd.append("--progress")
+    if show_result:
+        cmd.append("--result")
+    if human_readable:
+        cmd.append("--human-readable")
     
     # Start the Rust process
     try:
         process = subprocess.Popen(
-            [rust_binary_path],
+            cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -164,92 +180,161 @@ def run_rust_optimizer(job: Dict[str, Any], rust_binary_path: str = "./target/re
         process.stdin.close()
         
         steps = []
+        result = None
         
-        # Read step outputs from stdout
+        # Read outputs from stdout
         for line in process.stdout:
             line = line.strip()
             if line:
-                try:
-                    step = json.loads(line)
-                    steps.append(step)
-                    
-                    # Print progress
-                    print(f"Step {step['step']}: {step['message']}")
-                    print(f"  Filters: {len(step['filters'])}")
-                    print(f"  Error: {step['residual_error']:.2f} dB RMS")
-                    print(f"  Progress: {step['progress_percent']:.1f}%")
-                    
-                    if step['filters']:
-                        last_filter = step['filters'][-1]
-                        print(f"  Last filter: {last_filter.get('description', 'Unknown')}")
-                    print()
-                    
-                except json.JSONDecodeError as e:
-                    print(f"Warning: Could not parse step output: {line}")
-                    continue
+                if human_readable:
+                    # Just print human-readable output directly
+                    print(line)
+                else:
+                    # Parse JSON output
+                    try:
+                        data = json.loads(line)
+                        
+                        # Differentiate between step and result JSON
+                        if "step" in data and "progress_percent" in data:
+                            # This is an optimization step
+                            steps.append(data)
+                            
+                            # Print progress
+                            print(f"Step {data['step']}: {data['message']}")
+                            print(f"  Filters: {len(data['filters'])}")
+                            print(f"  Error: {data['residual_error']:.2f} dB RMS")
+                            print(f"  Progress: {data['progress_percent']:.1f}%")
+                            
+                            if data['filters']:
+                                last_filter = data['filters'][-1]
+                                print(f"  Last filter: {last_filter.get('description', 'Unknown')}")
+                            print()
+                        elif "success" in data and "final_error" in data:
+                            # This is the final result
+                            result = data
+                            print("=== FINAL RESULT ===")
+                            print(f"Success: {data['success']}")
+                            print(f"Original error: {data['original_error']:.2f} dB RMS")
+                            print(f"Final error: {data['final_error']:.2f} dB RMS") 
+                            print(f"Improvement: {data['improvement_db']:.1f} dB")
+                            print(f"Processing time: {data['processing_time_ms']} ms")
+                            print(f"Filters created: {len(data['filters'])}")
+                            print()
+                        
+                    except json.JSONDecodeError:
+                        print(f"Note: {line}")  # Non-JSON output
+                        continue
         
         # Wait for process to complete
         return_code = process.wait()
         
-        # Read any final messages from stderr
+        # Read any messages from stderr
         stderr_output = process.stderr.read()
         if stderr_output:
-            print("=== Optimizer Summary ===")
+            print("=== Additional Info ===")
             print(stderr_output)
         
         if return_code != 0:
             print(f"❌ Optimizer failed with return code {return_code}")
-            return []
+            return [], None
         
         print(f"✅ Optimization completed successfully!")
-        return steps
+        return steps, result
         
     except FileNotFoundError:
         print(f"❌ Rust binary not found: {rust_binary_path}")
         print("   Make sure to compile the Rust code first:")
         print("   cd src/rust && cargo build --release")
-        return []
+        return [], None
     except Exception as e:
         print(f"❌ Error running optimizer: {e}")
-        return []
+        return [], None
 
-def analyze_results(steps: List[Dict[str, Any]]):
+def analyze_results(steps: List[Dict[str, Any]], result: Optional[Dict[str, Any]] = None):
     """Analyze and summarize optimization results."""
-    if not steps:
-        print("No optimization steps to analyze.")
+    if not steps and not result:
+        print("No optimization steps or results to analyze.")
         return
     
     print("\n=== Optimization Analysis ===")
     
-    first_step = steps[0]
-    last_step = steps[-1]
-    
-    initial_error = first_step['residual_error']
-    final_error = last_step['residual_error']
-    improvement_db = 20 * np.log10(initial_error / max(final_error, 1e-10))
-    
-    print(f"Initial error: {initial_error:.2f} dB RMS")
-    print(f"Final error: {final_error:.2f} dB RMS") 
-    print(f"Improvement: {improvement_db:.1f} dB")
-    print(f"Total filters: {len(last_step['filters'])}")
-    
-    print("\n=== Filter Summary ===")
-    for i, filter_info in enumerate(last_step['filters']):
-        filter_type = filter_info.get('filter_type', 'unknown')
-        freq = filter_info.get('frequency', 0)
-        q = filter_info.get('q', 0)
-        gain = filter_info.get('gain_db', 0)
+    # Use result data if available, otherwise fallback to steps
+    if result:
+        initial_error = result.get('original_error', 0)
+        final_error = result.get('final_error', 0) 
+        improvement_db = result.get('improvement_db', 0)
+        filters = result.get('filters', [])
+        processing_time = result.get('processing_time_ms', 0)
         
-        if filter_type == "hp":
-            print(f"  Filter {i+1}: High-pass at {freq:.1f}Hz (Q={q:.2f})")
-        elif filter_type == "eq":
-            print(f"  Filter {i+1}: Peaking EQ at {freq:.1f}Hz, {gain:+.1f}dB (Q={q:.2f})")
-        elif filter_type == "ls":
-            print(f"  Filter {i+1}: Low shelf at {freq:.1f}Hz, {gain:+.1f}dB (Q={q:.2f})")
-        elif filter_type == "hs":
-            print(f"  Filter {i+1}: High shelf at {freq:.1f}Hz, {gain:+.1f}dB (Q={q:.2f})")
-        else:
-            print(f"  Filter {i+1}: {filter_info.get('description', 'Unknown filter')}")
+        print(f"Initial error: {initial_error:.2f} dB RMS")
+        print(f"Final error: {final_error:.2f} dB RMS") 
+        print(f"Improvement: {improvement_db:.1f} dB")
+        print(f"Processing time: {processing_time} ms")
+        print(f"Total filters: {len(filters)}")
+    elif steps:
+        first_step = steps[0]
+        last_step = steps[-1]
+        
+        initial_error = first_step['residual_error']
+        final_error = last_step['residual_error']
+        improvement_db = 20 * np.log10(initial_error / max(final_error, 1e-10))
+        filters = last_step.get('filters', [])
+        
+        print(f"Initial error: {initial_error:.2f} dB RMS")
+        print(f"Final error: {final_error:.2f} dB RMS") 
+        print(f"Improvement: {improvement_db:.1f} dB")
+        print(f"Total filters: {len(filters)}")
+    
+    if filters:
+        print("\n=== Filter Summary ===")
+        for i, filter_info in enumerate(filters):
+            filter_type = filter_info.get('filter_type', 'unknown')
+            freq = filter_info.get('frequency', 0)
+            q = filter_info.get('q', 0)
+            gain = filter_info.get('gain_db', 0)
+            
+            if filter_type == "hp":
+                print(f"  Filter {i+1}: High-pass at {freq:.1f}Hz (Q={q:.2f})")
+            elif filter_type == "eq":
+                print(f"  Filter {i+1}: Peaking EQ at {freq:.1f}Hz, {gain:+.1f}dB (Q={q:.2f})")
+            elif filter_type == "ls":
+                print(f"  Filter {i+1}: Low shelf at {freq:.1f}Hz, {gain:+.1f}dB (Q={q:.2f})")
+            elif filter_type == "hs":
+                print(f"  Filter {i+1}: High shelf at {freq:.1f}Hz, {gain:+.1f}dB (Q={q:.2f})")
+            else:
+                print(f"  Filter {i+1}: {filter_info.get('description', 'Unknown filter')}")
+
+def demo_different_modes(job: Dict[str, Any], rust_binary: str):
+    """Demonstrate different output modes."""
+    print("=" * 60)
+    print("🎯 Demonstrating Different Output Modes")
+    print("=" * 60)
+    
+    # Mode 1: JSON output with progress and result
+    print("\n1️⃣  JSON Mode: Progress + Result")
+    print("-" * 40)
+    steps, result = run_rust_optimizer(job, rust_binary, 
+                                     show_progress=True, show_result=True, human_readable=False)
+    
+    # Mode 2: Human-readable output with progress and result  
+    print("\n2️⃣  Human-readable Mode: Progress + Result")
+    print("-" * 40)
+    steps2, result2 = run_rust_optimizer(job, rust_binary,
+                                       show_progress=True, show_result=True, human_readable=True)
+    
+    # Mode 3: Result only (silent processing)
+    print("\n3️⃣  Silent Mode: Result Only")
+    print("-" * 40)
+    steps3, result3 = run_rust_optimizer(job, rust_binary,
+                                       show_progress=False, show_result=True, human_readable=False)
+    
+    # Mode 4: Progress only (no final result)
+    print("\n4️⃣  Monitoring Mode: Progress Only")
+    print("-" * 40)
+    steps4, result4 = run_rust_optimizer(job, rust_binary,
+                                       show_progress=True, show_result=False, human_readable=True)
+    
+    return steps, result
 
 def main():
     """Main demonstration function."""
@@ -258,30 +343,46 @@ def main():
     else:
         rust_binary = "./target/release/roomeq-optimizer"
     
-    print("🎵 RoomEQ Rust Optimizer Demo")
-    print("=" * 50)
+    print("🎵 RoomEQ Rust Optimizer Demo - Command Line Options")
+    print("=" * 60)
     
     # Create sample optimization job
     job = create_optimization_job(
         curve_type="weighted_flat",
         preset_type="default", 
-        filter_count=8,
+        filter_count=6,  # Reduced for faster demo
         sample_rate=48000.0
     )
     
-    # Run optimization
-    steps = run_rust_optimizer(job, rust_binary)
+    # Demonstrate different modes
+    steps, result = demo_different_modes(job, rust_binary)
     
     # Analyze results
-    analyze_results(steps)
+    if steps or result:
+        analyze_results(steps, result)
     
     print("\n🎯 Demo completed!")
+    print("\n📖 Command Line Usage Examples:")
+    print("   # JSON output with progress and result")
+    print("   roomeq-optimizer --progress --result < job.json")
+    print()
+    print("   # Human-readable output")  
+    print("   roomeq-optimizer --progress --result --human-readable < job.json")
+    print()
+    print("   # Silent mode (result only)")
+    print("   roomeq-optimizer --result < job.json")
+    print()
+    print("   # Monitor mode (progress only)")
+    print("   roomeq-optimizer --progress --human-readable < job.json")
+    print()
+    print("   # Completely silent (no output unless error)")
+    print("   roomeq-optimizer < job.json")
     
-    if not steps:
+    if not steps and not result:
         print("\n📝 To build and run the Rust optimizer:")
         print("   cd src/rust")
         print("   cargo build --release")
-        print("   python3 ../../demo_rust_optimizer.py")
+        print("   python3 demo_rust_optimizer.py")
 
 if __name__ == "__main__":
     main()
