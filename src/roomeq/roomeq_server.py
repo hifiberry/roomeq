@@ -1090,15 +1090,15 @@ def eq_optimize():
     """Run EQ optimization from FFT data or recording with streaming output."""
     from flask import Response
     
+    # Extract request data BEFORE creating the generator (to avoid request context issues)
+    if request.is_json:
+        data = request.get_json()
+    else:
+        data = {}
+    
     def generate_optimization_stream():
         try:
-            # Parse request data
-            if request.is_json:
-                data = request.get_json()
-            else:
-                data = {}
-            
-            # Get parameters
+            # Get parameters from pre-extracted data
             target_curve = data.get('target_curve', 'weighted_flat')
             optimizer_preset = data.get('optimizer_preset', 'default')
             filter_count = int(data.get('filter_count', 8))
