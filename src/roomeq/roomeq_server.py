@@ -656,11 +656,12 @@ def analyze_fft_diff():
         elif filename1:
             # Look for filename in recording directory
             from .recording import recording_manager
-            recording_files = recording_manager.list_completed_recordings()
+            recording_files = recording_manager.get_completed_recordings()
             matching_file = None
-            for rec_data in recording_files:
+            for rec_id, rec_data in recording_files.items():
                 if rec_data["filename"] == filename1:
                     matching_file = rec_data
+                    matching_file["recording_id"] = rec_id  # Add the recording ID
                     break
             if matching_file is None:
                 abort(404, f"Recording file '{filename1}' not found")
@@ -698,11 +699,12 @@ def analyze_fft_diff():
         elif filename2:
             # Look for filename in recording directory
             from .recording import recording_manager
-            recording_files = recording_manager.list_completed_recordings()
+            recording_files = recording_manager.get_completed_recordings()
             matching_file = None
-            for rec_data in recording_files:
+            for rec_id, rec_data in recording_files.items():
                 if rec_data["filename"] == filename2:
                     matching_file = rec_data
+                    matching_file["recording_id"] = rec_id  # Add the recording ID
                     break
             if matching_file is None:
                 abort(404, f"Recording file '{filename2}' not found")
