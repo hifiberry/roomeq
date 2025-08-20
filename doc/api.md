@@ -20,6 +20,13 @@
   - [SPL Measurement](#spl-measurement)
     - [GET `/spl/measure`](#get-splmeasure)
   - [Signal Generation](#signal-generation)
+    - [POST `/audio/generate/sweep`](#post-audiogeneratesweep)
+    - [POST `/audio/generate/noise`](#post-audiogeneratenoise)
+  - [Audio Playback](#audio-playback)
+    - [POST `/audio/play/file`](#post-audioplayfile)
+    - [POST `/audio/play/stop`](#post-audioplaystop)
+    - [GET `/audio/play/status`](#get-audioplaystatus)
+  - [Legacy Signal Generation (Deprecated)](#legacy-signal-generation-deprecated)
     - [POST `/audio/noise/start`](#post-audionoisestart)
     - [POST `/audio/noise/keep-playing`](#post-audionoisekeep-playing)
     - [POST `/audio/noise/stop`](#post-audionoisestop)
@@ -111,11 +118,16 @@ Get API information and endpoint overview.
     "audio_devices": {"/audio/inputs": "Input cards", "/audio/cards": "All cards"},
     "measurements": {"/spl/measure": "SPL measurement"},
     "signal_generation": {
-      "/audio/noise/start": "White noise playback",
-      "/audio/noise/keep-playing": "Extend playback", 
-      "/audio/noise/stop": "Stop playback",
-      "/audio/noise/status": "Playback status",
-      "/audio/sweep/start": "Sine sweep generation"
+      "/audio/generate/sweep": "Generate sine sweep file",
+      "/audio/generate/noise": "Generate noise file",
+      "/audio/play/file": "Play audio file",
+      "/audio/play/stop": "Stop audio playback",
+      "/audio/play/status": "Playback status",
+      "/audio/noise/start": "White noise playback (deprecated)",
+      "/audio/noise/keep-playing": "Extend playback (deprecated)", 
+      "/audio/noise/stop": "Stop playback (deprecated)",
+      "/audio/noise/status": "Playback status (deprecated)",
+      "/audio/sweep/start": "Sine sweep generation (deprecated)"
     },
     "fft_analysis": {
       "/audio/analyze/fft": "FFT analysis of WAV files",
@@ -318,8 +330,297 @@ curl -X GET "http://localhost:10315/spl/measure?duration=5.0"
 
 ### Signal Generation
 
+#### POST `/audio/generate/sweep`
+Generate a sine sweep file without immediate playback. This allows you to generate test signals for later use or analysis.
+
+**Query Parameters:**
+- `start_freq` (optional): Starting frequency in Hz (10-22000, default: 20)
+- `end_freq` (optional): Ending frequency in Hz (10-22000, default: 20000)
+- `duration` (optional): Duration per sweep in seconds (1.0-30.0, default: 5.0)
+- `sweeps` (optional): Number of consecutive sweeps (1-10, default: 1)
+- `amplitude` (optional): Amplitude level (0.0-1.0, default: 0.5)
+- `compensation_mode` (optional): Amplitude compensation envelope (`none | inv_sqrt_f | sqrt_f`, default: `none`)
+
+**Example Requests:**
+```bash
+# Generate single sweep file
+curl -X POST "http://localhost:10315/audio/generate/sweep?start_freq=20&end_freq=20000&duration=10&amplitude=0.4"
+
+# Generate multiple sweeps for averaging
+curl -X POST "http://localhost:10315/audio/generate/sweep?start_freq=100&end_freq=8000&duration=5&sweeps=3&amplitude=0.3"
+
+# Generate with compensation
+curl -X POST "http://localhost:10315/audio/generate/sweep?start_freq=20&end_freq=20000&duration=8&compensation_mode=inv_sqrt_f"
+```
+
+**Response:**
+```json
+{
+  "status": "generated",
+  "signal_type": "sine_sweep",
+  "filename": "roomeq_sweep_abc123def456.wav",
+  "filepath": "/tmp/roomeq_sweep_abc123def456.wav",
+  "start_freq": 20.0,
+  "end_freq": 20000.0,
+  "duration": 10.0,
+  "sweeps": 1,
+  "total_duration": 10.0,
+  "amplitude": 0.4,
+  "compensation_mode": "none",
+  "message": "Generated 1 sine sweep(s): 20.0 Hz → 20000.0 Hz, 10.0s each (total: 10.0s)"
+}
+```
+
+#### POST `/audio/generate/noise`
+Generate a white noise file without immediate playback.
+
+**Query Parameters:**
+- `duration` (optional): Duration in seconds (1.0-60.0, default: 3.0)
+- `amplitude` (optional): Amplitude level (0.0-1.0, default: 0.5)
+
+**Example Requests:**
+```bash
+# Generate 5-second noise file
+curl -X POST "http://localhost:10315/audio/generate/noise?duration=5&amplitude=0.3"
+
+# Generate short burst for testing
+curl -X POST "http://localhost:10315/audio/generate/noise?duration=1&amplitude=0.8"
+```
+
+**Response:**
+```json
+{
+  "status": "generated",
+  "signal_type": "noise",
+  "filename": "roomeq_noise_xyz789abc123.wav",
+  "filepath": "/tmp/roomeq_noise_xyz789abc123.wav",
+  "duration": 5.0,
+  "amplitude": 0.3,
+  "message": "Generated white noise: 5.0s at 30% amplitude"
+}
+```
+
+### Audio Playback
+
+#### POST `/audio/play/file`
+Play an audio file through the specified output device. This endpoint can play generated files or any WAV file with optional repeat functionality.
+
+**Query Parameters:**
+- `filepath` (optional): Full path to the audio file to play
+- `filename` (optional): Filename to play (searches in `/tmp` for generated files)
+- `device` (optional): Output device (e.g., "hw:0,0"). Uses default if not specified
+- `repeats` (optional): Number of times to repeat the file (1-100, default: 1)
+
+**Note:** Must specify either `filepath` OR `filename`. If only `filename` is provided, the system looks for the file in `/tmp` where generated files are stored.
+
+**Example Requests:**
+```bash
+# Play a generated sweep file by filename (single play)
+curl -X POST "http://localhost:10315/audio/play/file?filename=roomeq_sweep_abc123def456.wav"
+
+# Play a generated noise file 3 times for acoustic averaging
+curl -X POST "http://localhost:10315/audio/play/file?filename=roomeq_noise_xyz789abc123.wav&repeats=3"
+
+# Play external file with specific device and 5 repeats
+curl -X POST "http://localhost:10315/audio/play/file?filepath=/home/user/test_signal.wav&device=hw:1,0&repeats=5"
+
+# Play sweep file for extended measurement (10 repeats)
+curl -X POST "http://localhost:10315/audio/play/file?filename=roomeq_sweep_abc123def456.wav&repeats=10&device=hw:0,0"
+```
+
+**Response:**
+```json
+{
+  "status": "started",
+  "signal_type": "file",
+  "filename": "roomeq_sweep_abc123def456.wav",
+  "filepath": "/tmp/roomeq_sweep_abc123def456.wav",
+  "duration": 10.0,
+  "repeats": 3,
+  "total_duration": 30.2,
+  "device": "hw:1,0",
+  "stop_time": "2025-08-20T15:30:45.123456",
+  "message": "Started playing file: roomeq_sweep_abc123def456.wav (3 times)"
+}
+```
+
+**Response Fields:**
+- `duration`: Duration of a single playback of the file
+- `repeats`: Number of times the file will be played
+- `total_duration`: Total playback time including all repeats and gaps (0.1s gap between repeats)
+- Other fields as described in the unified status endpoint
+
+**Use Cases:**
+- **Acoustic Averaging**: Repeat test signals multiple times for noise reduction and more accurate measurements
+- **Extended Testing**: Long-duration testing with consistent signals
+- **Calibration Procedures**: Repeated calibration signals for equipment setup
+- **Automated Measurements**: Scripted testing sequences with precise repeat counts
+
+#### POST `/audio/play/stop`
+Stop any currently playing audio file.
+
+**Example Request:**
+```bash
+curl -X POST http://localhost:10315/audio/play/stop
+```
+
+**Response:**
+```json
+{
+  "status": "stopped",
+  "message": "Audio playback stopped"
+}
+```
+
+**Response (no active playback):**
+```json
+{
+  "status": "not_active",
+  "message": "No active playback to stop"
+}
+```
+
+#### GET `/audio/play/status`
+Get current audio playback status with detailed information.
+
+**Example Request:**
+```bash
+curl -X GET http://localhost:10315/audio/play/status
+```
+
+**Response:**
+```json
+{
+  "active": true,
+  "signal_type": "file",
+  "device": "hw:1,0",
+  "remaining_seconds": 7.3,
+  "stop_time": "2025-08-20T15:30:45.123456",
+  "filename": "roomeq_sweep_abc123def456.wav",
+  "filepath": "/tmp/roomeq_sweep_abc123def456.wav",
+  "total_duration": 30.2,
+  "repeats": 3,
+  "file_duration_single": 10.0
+}
+```
+
+**Response Fields:**
+- `active`: Whether audio is currently playing
+- `signal_type`: Type of signal being played ("file", "noise", "sine_sweep")
+- `device`: Output device being used
+- `remaining_seconds`: Seconds until automatic stop
+- `stop_time`: ISO timestamp when playback will stop
+- `filename`: Name of the file being played
+- `filepath`: Full path to the file being played
+- `total_duration`: Total playback time including all repeats and gaps
+- `repeats`: Number of times the file will be/is being played (file playback only)
+- `file_duration_single`: Duration of a single playback of the file (file playback only)
+
+For legacy signal types (noise/sine_sweep), additional fields may be included for backward compatibility.
+
+### Legacy Signal Generation (Deprecated)
+
+**Note:** The following endpoints are deprecated in favor of the separate generator and player APIs above. They are maintained for backward compatibility but may be removed in future versions.
+
 #### POST `/audio/noise/start`
 Start white noise playback with automatic timeout.
+
+**DEPRECATED:** Use `/audio/generate/noise` + `/audio/play/file` for better separation of concerns.
+
+**Query Parameters:**
+- `duration` (optional): Initial playback duration in seconds (1.0-30.0, default: 3.0)
+- `amplitude` (optional): Amplitude level (0.0-1.0, default: 0.5)
+- `device` (optional): Output device (e.g., "hw:0,0"). Uses default if not specified
+
+**Example Requests:**
+```bash
+# Basic noise generation
+curl -X POST http://localhost:10315/audio/noise/start
+
+# Custom duration and amplitude
+curl -X POST "http://localhost:10315/audio/noise/start?duration=5&amplitude=0.3"
+
+# Specific output device
+curl -X POST "http://localhost:10315/audio/noise/start?duration=10&amplitude=0.4&device=hw:0,0"
+```
+
+**Response:**
+```json
+{
+  "status": "started",
+  "duration": 5.0,
+  "amplitude": 0.3,
+  "device": "hw:0,0",
+  "filename": "noise_a1b2c3d4-e5f6-7890-abcd-ef1234567890.wav",
+  "stop_time": "2025-08-18T15:30:45.123456",
+  "message": "Noise playback started for 5.0 seconds"
+}
+```
+
+#### POST `/audio/noise/keep-playing`
+Extend current noise playback duration (keep-alive mechanism).
+
+**DEPRECATED:** Use `/audio/play/stop` and `/audio/play/file` for better control.
+
+**Query Parameters:**
+- `duration` (optional): Additional duration in seconds (1.0-30.0, default: 3.0)
+
+**Example Requests:**
+```bash
+# Extend by default 3 seconds
+curl -X POST http://localhost:10315/audio/noise/keep-playing
+
+# Extend by specific duration
+curl -X POST "http://localhost:10315/audio/noise/keep-playing?duration=5"
+```
+
+**Response:**
+```json
+{
+  "status": "extended",
+  "duration": 3.0,
+  "new_stop_time": "2025-08-14T15:30:48.123456",
+  "message": "Playback extended by 3.0 seconds"
+}
+```
+
+**Error Response (no active playback):**
+```json
+{
+  "detail": "No active noise playback to extend"
+}
+```
+
+#### POST `/audio/noise/stop`
+Stop current noise playback immediately.
+
+**DEPRECATED:** Use `/audio/play/stop` for unified playback control.
+
+**Example Request:**
+```bash
+curl -X POST http://localhost:10315/audio/noise/stop
+```
+
+**Response:**
+```json
+{
+  "status": "stopped",
+  "message": "Noise playback stopped"
+}
+```
+
+**Response (no active playback):**
+```json
+{
+  "status": "not_active",
+  "message": "No active noise playback to stop"
+}
+```
+
+#### GET `/audio/noise/status`
+Get current noise playback status.
+
+**DEPRECATED:** Use `/audio/play/status` for unified playback status.
 
 **Query Parameters:**
 - `duration` (optional): Initial playback duration in seconds (1.0-30.0, default: 3.0)

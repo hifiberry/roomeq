@@ -495,6 +495,90 @@ class SignalGenerator:
         if self.playback_thread:
             self.playback_thread.join()
 
+    def play_file(self, filepath: str, repeats: int = 1) -> bool:
+        """
+        Play an audio file using ALSA.
+        
+        Args:
+            filepath: Path to the WAV file to play
+            repeats: Number of times to repeat the file (default: 1)
+            
+        Returns:
+            True if playback started successfully, False otherwise
+        """
+        if not os.path.exists(filepath):
+            logger.error(f"Audio file not found: {filepath}")
+            return False
+            
+        if repeats < 1:
+            logger.error("Repeats must be at least 1")
+            return False
+            
+        if self.playback_thread and self.playback_thread.is_alive():
+            logger.warning("Playback already active. Stop current playback first.")
+            return False
+            
+        try:
+            import wave
+            
+            # Verify it's a valid WAV file
+            with wave.open(filepath, 'rb') as wf:
+                file_channels = wf.getnchannels()
+                file_rate = wf.getframerate()
+                file_width = wf.getsampwidth()
+                
+                if file_rate != self.sample_rate:
+                    logger.warning(f"File sample rate ({file_rate}) differs from generator rate ({self.sample_rate})")
+                if file_channels != self.channels:
+                    logger.warning(f"File channels ({file_channels}) differs from generator channels ({self.channels})")
+            
+            # Start playback thread
+            self.stop_playback = False
+            self.playback_thread = threading.Thread(target=self._play_file_thread, args=(filepath, repeats), daemon=True)
+            self.playback_thread.start()
+            
+            logger.info(f"Started playing file: {filepath} ({repeats} time{'s' if repeats != 1 else ''})")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to start file playback: {e}")
+            return False
+    
+    def _play_file_thread(self, filepath: str, repeats: int = 1):
+        """Thread function for playing an audio file with repeat support."""
+        import wave
+        
+        try:
+            self._open_playback()
+            
+            for repeat_count in range(repeats):
+                if self.stop_playback:
+                    break
+                    
+                logger.debug(f"Playing file repeat {repeat_count + 1}/{repeats}: {filepath}")
+                
+                with wave.open(filepath, 'rb') as wf:
+                    # Read and play file in chunks
+                    chunk_size = 1024  # frames per chunk
+                    
+                    while not self.stop_playback:
+                        frames = wf.readframes(chunk_size)
+                        if not frames:
+                            break  # End of file
+                            
+                        # Write to PCM
+                        self.pcm.write(frames)
+                
+                # Add a small gap between repeats (except after the last repeat)
+                if repeat_count < repeats - 1 and not self.stop_playback:
+                    time.sleep(0.1)  # 100ms gap between repeats
+                    
+        except Exception as e:
+            logger.error(f"Error during file playback: {e}")
+        finally:
+            self._close_playback()
+            logger.debug(f"File playback thread finished after {repeats} repeat{'s' if repeats != 1 else ''}")
+
     def play_sine_sweep_sox(self, start_freq: float = 20, end_freq: float = 20000,
                              duration: float = 10, amplitude: float = 0.5, repeats: int = 1,
                              sox_delay: float = 0.0) -> bool:

@@ -1074,9 +1074,313 @@ def cleanup_status_endpoint():
     return jsonify(get_cleanup_status())
 
 
+
+# =============================================================================
+# Generator API - Generate audio files without immediate playback
+# =============================================================================
+
+@app.route("/audio/generate/sweep", methods=["POST"])
+def generate_sweep():
+    """Generate a sine sweep file without playing it."""
+    try:
+        duration_str = request.args.get("duration", "5.0")
+        amplitude_str = request.args.get("amplitude", "0.5")
+        start_freq_str = request.args.get("start_freq", "20")
+        end_freq_str = request.args.get("end_freq", "20000")
+        sweeps_str = request.args.get("sweeps", "1")
+        compensation_mode = request.args.get("compensation_mode", "none").lower()
+        
+        duration = validate_float_param("duration", duration_str, 1.0, 30.0)
+        amplitude = validate_float_param("amplitude", amplitude_str, 0.0, 1.0)
+        start_freq = validate_float_param("start_freq", start_freq_str, 10.0, 22000.0)
+        end_freq = validate_float_param("end_freq", end_freq_str, 10.0, 22000.0)
+        
+        try:
+            sweeps = int(sweeps_str)
+            if sweeps < 1 or sweeps > 10:
+                abort(400, "sweeps must be between 1 and 10")
+        except ValueError:
+            abort(400, "Invalid sweeps: must be an integer")
+        
+        if start_freq >= end_freq:
+            abort(400, "start_freq must be less than end_freq")
+            
+        # Validate compensation mode
+        valid_modes = {"none", "inv_sqrt_f", "sqrt_f"}
+        if compensation_mode not in valid_modes:
+            abort(400, f"compensation_mode must be one of {sorted(valid_modes)}")
+
+        # Calculate total duration
+        total_duration = duration * sweeps
+        
+        # Create generator (no device needed for file generation)
+        generator = SignalGenerator()
+        
+        # Generate sweep file
+        sweep_file = generator.generate_sweep_file(
+            start_freq=start_freq,
+            end_freq=end_freq,
+            duration=duration,
+            amplitude=amplitude,
+            compensation_mode=compensation_mode,
+            sweeps=sweeps
+        )
+        
+        logger.info(f"Generated sweep file: {os.path.basename(sweep_file)} - {sweeps} sweep(s), {start_freq} Hz → {end_freq} Hz, {duration}s each")
+        
+        return jsonify({
+            "status": "generated",
+            "signal_type": "sine_sweep", 
+            "filename": os.path.basename(sweep_file),
+            "filepath": sweep_file,
+            "start_freq": start_freq,
+            "end_freq": end_freq,
+            "duration": duration,
+            "sweeps": sweeps,
+            "total_duration": total_duration,
+            "amplitude": amplitude,
+            "compensation_mode": compensation_mode,
+            "message": f"Generated {sweeps} sine sweep(s): {start_freq} Hz → {end_freq} Hz, {duration}s each (total: {total_duration}s)"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error generating sweep: {e}")
+        abort(500, f"Failed to generate sweep: {str(e)}")
+
+
+@app.route("/audio/generate/noise", methods=["POST"])
+def generate_noise():
+    """Generate a white noise file without playing it."""
+    try:
+        duration_str = request.args.get("duration", "3.0")
+        amplitude_str = request.args.get("amplitude", "0.5")
+        
+        duration = validate_float_param("duration", duration_str, 1.0, 60.0)  # Max 60 seconds
+        amplitude = validate_float_param("amplitude", amplitude_str, 0.0, 1.0)
+        
+        # Create generator (no device needed for file generation)
+        generator = SignalGenerator()
+        
+        # Generate noise file
+        noise_file = generator.generate_noise_file(duration=duration, amplitude=amplitude)
+        
+        logger.info(f"Generated noise file: {os.path.basename(noise_file)} - {duration}s at {amplitude*100:.0f}% amplitude")
+        
+        return jsonify({
+            "status": "generated",
+            "signal_type": "noise",
+            "filename": os.path.basename(noise_file),
+            "filepath": noise_file,
+            "duration": duration,
+            "amplitude": amplitude,
+            "message": f"Generated white noise: {duration}s at {amplitude*100:.0f}% amplitude"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error generating noise: {e}")
+        abort(500, f"Failed to generate noise: {str(e)}")
+
+
+# =============================================================================
+# Player API - Play back generated or existing audio files
+# =============================================================================
+
+@app.route("/audio/play/file", methods=["POST"])
+def play_file():
+    """Play an audio file."""
+    global _signal_generator, _playback_state
+    
+    try:
+        filepath = request.args.get("filepath") or request.args.get("filename")
+        device = request.args.get("device")
+        repeats_str = request.args.get("repeats", "1")
+        
+        if not filepath:
+            abort(400, "filepath or filename parameter is required")
+        
+        # Validate repeats parameter
+        try:
+            repeats = int(repeats_str)
+            if repeats < 1 or repeats > 100:  # Reasonable upper limit
+                abort(400, "repeats must be between 1 and 100")
+        except ValueError:
+            abort(400, "Invalid repeats: must be an integer")
+        
+        # If only a filename is provided, look in common locations
+        if not os.path.isabs(filepath):
+            # Try /tmp first (where generated files are stored)
+            tmp_path = os.path.join('/tmp', filepath)
+            if os.path.exists(tmp_path):
+                filepath = tmp_path
+            else:
+                abort(404, f"Audio file not found: {filepath}")
+        
+        if not os.path.exists(filepath):
+            abort(404, f"Audio file not found: {filepath}")
+        
+        # Stop any existing playback
+        if _signal_generator and _playback_state['active']:
+            _signal_generator.stop()
+            _playback_state['active'] = False
+        
+        # Create new generator
+        _signal_generator = SignalGenerator(device=device)
+        
+        # Get file info for tracking
+        try:
+            import wave
+            with wave.open(filepath, 'rb') as wf:
+                file_duration_single = wf.getnframes() / wf.getframerate()
+        except Exception:
+            # Fallback if we can't read the file info
+            file_duration_single = 10.0  # Rough estimate
+        
+        # Calculate total duration including repeats and gaps
+        total_duration = (file_duration_single * repeats) + (0.1 * max(0, repeats - 1))  # 0.1s gap between repeats
+        
+        # Set stop time based on total duration
+        stop_time = datetime.now() + timedelta(seconds=total_duration)
+        
+        # Update playback state
+        _playback_state.update({
+            'active': True,
+            'stop_time': stop_time,
+            'amplitude': None,  # Not applicable for file playback
+            'device': device,
+            'signal_type': 'file',
+            'start_freq': None,
+            'end_freq': None,
+            'sweeps': None,
+            'sweep_duration': None,
+            'total_duration': total_duration,
+            'compensation_mode': None,
+            'filename': os.path.basename(filepath),
+            'filepath': filepath,
+            'repeats': repeats,
+            'file_duration_single': file_duration_single
+        })
+        
+        # Start file playback with repeats
+        started = _signal_generator.play_file(filepath, repeats=repeats)
+        
+        if not started:
+            abort(500, "Failed to start file playback")
+            
+        # Wait briefly to ensure playback started
+        for _ in range(10):
+            if _signal_generator.is_playing():
+                break
+            time.sleep(0.05)
+        
+        # Start monitor thread
+        monitor_thread = threading.Thread(target=_monitor_playback, daemon=True)
+        monitor_thread.start()
+        
+        logger.info(f"Started playing file: {os.path.basename(filepath)} ({repeats} time{'s' if repeats != 1 else ''})")
+        
+        return jsonify({
+            "status": "started",
+            "signal_type": "file",
+            "filename": os.path.basename(filepath),
+            "filepath": filepath,
+            "duration": file_duration_single,
+            "repeats": repeats,
+            "total_duration": total_duration,
+            "device": device or "default",
+            "stop_time": stop_time.isoformat(),
+            "message": f"Started playing file: {os.path.basename(filepath)} ({repeats} time{'s' if repeats != 1 else ''})"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error playing file: {e}")
+        abort(500, f"Failed to play file: {str(e)}")
+
+
+@app.route("/audio/play/stop", methods=["POST"])
+def stop_playback():
+    """Stop any current audio playback."""
+    global _signal_generator, _playback_state
+    
+    try:
+        if _signal_generator and _playback_state['active']:
+            _signal_generator.stop()
+            _playback_state['active'] = False
+            _playback_state['stop_time'] = None
+            
+            logger.info("Stopped audio playback")
+            
+            return jsonify({
+                "status": "stopped",
+                "message": "Audio playback stopped"
+            })
+        else:
+            return jsonify({
+                "status": "not_active",
+                "message": "No active playback to stop"
+            })
+            
+    except Exception as e:
+        logger.error(f"Error stopping playback: {e}")
+        abort(500, f"Failed to stop playback: {str(e)}")
+
+
+@app.route("/audio/play/status", methods=["GET"])
+def get_playback_status():
+    """Get the current status of audio playback."""
+    global _playback_state
+    
+    if _playback_state['active'] and _playback_state['stop_time']:
+        remaining_time = (_playback_state['stop_time'] - datetime.now()).total_seconds()
+        remaining_time = max(0, remaining_time)  # Don't show negative time
+    else:
+        remaining_time = 0
+    
+    status = {
+        "active": _playback_state['active'],
+        "signal_type": _playback_state['signal_type'],
+        "device": _playback_state['device'] or "default",
+        "remaining_seconds": round(remaining_time, 1),
+        "stop_time": _playback_state['stop_time'].isoformat() if _playback_state['stop_time'] else None,
+        "filename": _playback_state.get('filename'),
+        "filepath": _playback_state.get('filepath')
+    }
+    
+    # Add signal-specific information
+    if _playback_state['signal_type'] == 'sine_sweep':
+        status.update({
+            "start_freq": _playback_state['start_freq'],
+            "end_freq": _playback_state['end_freq'],
+            "sweeps": _playback_state['sweeps'],
+            "sweep_duration": _playback_state['sweep_duration'],
+            "compensation_mode": _playback_state['compensation_mode']
+        })
+    elif _playback_state['signal_type'] == 'file':
+        status.update({
+            "total_duration": _playback_state['total_duration'],
+            "repeats": _playback_state.get('repeats', 1),
+            "file_duration_single": _playback_state.get('file_duration_single')
+        })
+    elif _playback_state['signal_type'] in ['noise']:
+        status.update({
+            "total_duration": _playback_state['total_duration']
+        })
+    
+    if _playback_state.get('amplitude') is not None:
+        status["amplitude"] = _playback_state['amplitude']
+    
+    return jsonify(status)
+
+
+# =============================================================================
+# Legacy Combined Generator/Player API (for backwards compatibility)
+# =============================================================================
+
 @app.route("/audio/sweep/start", methods=["POST"])
 def start_sine_sweep():
-    """Start playing a sine sweep for the specified duration."""
+    """Start playing a sine sweep for the specified duration.
+    
+    DEPRECATED: Use /audio/generate/sweep + /audio/play/file for better separation of concerns.
+    """
     global _signal_generator, _playback_state
     
     try:
@@ -1195,7 +1499,10 @@ def start_sine_sweep():
 
 @app.route("/audio/noise/start", methods=["POST"])
 def start_noise():
-    """Start playing white noise for the specified duration."""
+    """Start playing white noise for the specified duration.
+    
+    DEPRECATED: Use /audio/generate/noise + /audio/play/file for better separation of concerns.
+    """
     global _signal_generator, _playback_state
     
     try:
@@ -1291,7 +1598,10 @@ def keep_playing_noise():
 
 @app.route("/audio/noise/stop", methods=["POST"])
 def stop_noise():
-    """Stop the current noise playback immediately."""
+    """Stop the current noise playback immediately.
+    
+    DEPRECATED: Use /audio/play/stop for unified playback control.
+    """
     global _signal_generator, _playback_state
     
     try:
@@ -1319,7 +1629,10 @@ def stop_noise():
 
 @app.route("/audio/noise/status", methods=["GET"])
 def get_noise_status():
-    """Get the current status of audio playback (noise or sine sweep)."""
+    """Get the current status of audio playback (noise or sine sweep).
+    
+    DEPRECATED: Use /audio/play/status for unified playback status.
+    """
     global _playback_state
     
     if _playback_state['active'] and _playback_state['stop_time']:
