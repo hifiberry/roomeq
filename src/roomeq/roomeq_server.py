@@ -1414,10 +1414,10 @@ def root():
                 "/spl/measure": "Measure sound pressure level and RMS"
             },
             "signal_generation": {
-                "/audio/noise/start": "Start white noise playback",
+                "/audio/noise/start": "Start white noise playback with file tracking",
                 "/audio/noise/keep-playing": "Extend current noise playback",
                 "/audio/noise/stop": "Stop current playback immediately",
-                "/audio/noise/status": "Get current playback status",
+                "/audio/noise/status": "Get current playback status including filename",
                 "/audio/sweep/start": "Start sine sweep(s) with multiple repeat support"
             },
             "recording": {
@@ -1457,15 +1457,25 @@ def root():
                 "example": "curl -X GET 'http://localhost:10315/spl/measure?duration=2.0'"
             },
             "white_noise": {
-                "description": "Generate white noise for acoustic testing",
+                "description": "Generate white noise for acoustic testing with file tracking",
                 "method": "POST",
                 "url": "/audio/noise/start", 
                 "parameters": {
-                    "duration": "Playback duration in seconds (1.0-30.0, default: 3.0)",
+                    "duration": "Playback duration in seconds (1.0-60.0, default: 3.0)",
                     "amplitude": "Amplitude level (0.0-1.0, default: 0.5)",
                     "device": "Output device (optional, auto-detects if not specified)"
                 },
-                "example": "curl -X POST 'http://localhost:10315/audio/noise/start?duration=5&amplitude=0.3'"
+                "response": "Includes filename of generated noise file for tracking",
+                "example": "curl -X POST 'http://localhost:10315/audio/noise/start?duration=5&amplitude=0.3'",
+                "response_example": {
+                    "status": "started",
+                    "duration": 5.0,
+                    "amplitude": 0.3,
+                    "device": "default",
+                    "filename": "/tmp/roomeq_noise_abc123def456.wav",
+                    "stop_time": "2025-08-20T12:05:00.000000",
+                    "message": "Noise playback started for 5.0 seconds"
+                }
             },
             "sine_sweep_single": {
                 "description": "Generate single logarithmic sine sweep",
@@ -1596,7 +1606,8 @@ def root():
             },
             "playback_control": {
                 "stop": "curl -X POST http://localhost:10315/audio/noise/stop",
-                "status": "curl -X GET http://localhost:10315/audio/noise/status"
+                "status": "curl -X GET http://localhost:10315/audio/noise/status",
+                "status_note": "Status response includes filename for noise playback"
             },
             "eq_optimization": {
                 "description": "Automatic room EQ optimization with real-time streaming progress",
@@ -1662,8 +1673,17 @@ def root():
                 }
             },
             "playback_status": {
-                "description": "Current playback status with detailed information",
-                "example": {
+                "description": "Current playback status with detailed information including filename for noise",
+                "noise_example": {
+                    "active": True,
+                    "signal_type": "noise",
+                    "amplitude": 0.5,
+                    "device": "default",
+                    "remaining_seconds": 12.3,
+                    "stop_time": "2025-08-20T12:15:30.123456",
+                    "filename": "/tmp/roomeq_noise_abc123def456.wav"
+                },
+                "sweep_example": {
                     "active": True,
                     "signal_type": "sine_sweep",
                     "amplitude": 0.3,
@@ -1676,7 +1696,8 @@ def root():
                     "sweep_duration": 8.0,
                     "total_duration": 24.0,
                     "compensation_mode": "sqrt_f",
-                    "generator": "native"
+                    "generator": "native",
+                    "filename": null
                 }
             },
             "recording_status": {
@@ -1941,15 +1962,18 @@ def root():
         "technical_details": {
             "audio_format": "16-bit PCM, 48kHz sample rate",
             "sweep_type": "Logarithmic frequency progression",
-            "noise_type": "White noise with uniform frequency distribution", 
+            "noise_type": "White noise with uniform frequency distribution and temporary file generation", 
             "microphone_calibration": "Automatic sensitivity and gain compensation",
             "device_detection": "ALSA-based audio device enumeration",
-            "playback_monitoring": "Real-time status tracking with automatic timeout",
+            "playback_monitoring": "Real-time status tracking with automatic timeout and file tracking",
             "fft_analysis": "FFT with windowing functions, normalization, and logarithmic frequency summarization",
+            "fft_difference": "Signal comparison analysis with dB-domain difference computation, frequency interpolation, and statistical metrics",
             "frequency_summarization": "Logarithmic frequency buckets with configurable points per octave (1-100)",
+            "difference_statistics": "RMS, maximum, mean difference calculations with frequency range analysis",
             "eq_optimization": "Rust-based high-performance optimization with multiple target curves, real-time progress reporting, and frequency response calculation",
             "eq_filters": "Biquad parametric EQ filters with peaking, high-pass, low-shelf, and high-shelf types",
             "optimization_algorithms": "Advanced curve fitting with psychoacoustic smoothing and frequency-weighted error minimization",
+            "file_management": "Automatic temporary file generation and cleanup for noise signals",
             "cors_support": "Cross-origin requests enabled for web applications"
         },
         "server_info": {
