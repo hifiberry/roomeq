@@ -74,9 +74,9 @@ The RoomEQ Audio Processing API provides a comprehensive REST interface for micr
 
 - **Microphone Detection**: Automatic detection of USB and built-in microphones with sensitivity and gain information
 - **SPL Measurement**: Accurate sound pressure level measurement with calibrated microphones
-- **Signal Generation**: White noise and logarithmic sine sweep generation with keep-alive functionality and filename tracking
+- **Signal Generation**: White noise and logarithmic sine sweep generation with keep-alive functionality, filename tracking, and automatic cleanup
 - **Multiple Sweep Support**: Generate consecutive sine sweeps for acoustic averaging
-- **Audio Recording**: Background recording to WAV files with secure file management
+- **Audio Recording**: Background recording to WAV files with secure file management and automatic cleanup
 - **FFT Analysis**: Comprehensive spectral analysis with windowing functions, normalization, and logarithmic frequency summarization
 - **FFT Difference Analysis**: Compare two recordings using spectral difference analysis for room response and equipment testing
 - **EQ Optimization**: Automatic room EQ optimization with multiple target curves and real-time progress reporting
@@ -480,7 +480,7 @@ Perform FFT (Fast Fourier Transform) spectral analysis on a WAV file.
 **Parameters:**
 - `filename` (string, optional): Name of previously recorded file to analyze
 - `filepath` (string, optional): Full path to WAV file (external files)
-- `window` (string, optional): Window function - "hann", "hamming", "blackman", or "none" (default: "hann")
+- `window` (string, optional): Window function - "hann", "hamming", "blackman", "rectangular", or "none" (default: "hann")
 - `fft_size` (integer, optional): FFT size, must be power of 2 between 64-65536 (auto-calculated if not specified)
 - `start_time` (float, optional): Start analysis at this time in seconds (default: 0)
 - `start_at` (float, optional): Alternative name for `start_time` - start analysis at this time in seconds
@@ -760,7 +760,7 @@ Compare two audio files using FFT difference analysis. This endpoint supports mu
 - `filepath2` (string): Full path to second audio file (alternative to recording_id2/filename2)
 
 **Analysis Options:**
-- `window` (string, optional): Window function - "hann", "hamming", "blackman", or "none" (default: "hann")
+- `window` (string, optional): Window function - "hann", "hamming", "blackman", "rectangular", or "none" (default: "hann")
 - `points_per_octave` (integer, optional): Logarithmic frequency resolution (1-100, default: 12)
 - `normalize` (float, optional): Frequency in Hz to normalize both files to 0 dB before comparison
 - `start_time` (float, optional): Start analysis time in seconds (default: 0)
@@ -814,7 +814,7 @@ curl -X POST "http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc123
   },
   "difference_analysis": {
     "frequencies": [20.0, 23.8, 28.3, 33.7, 40.1, 47.8, 56.8, 67.6, 80.4, 95.6, 113.8, 135.4, 161.0, 191.7, 228.2, 271.7, 323.6, 385.4, 459.2, 547.1, 651.9, 776.5, 925.0, 1102.3, 1313.4, 1565.0, 1864.7, 2222.4, 2649.0, 3158.1, 3765.6, 4490.2, 5353.8, 6380.5, 7599.3, 9056.8, 10799.8, 12876.4, 15343.5, 18282.5],
-    "magnitude_differences": [-2.1, -1.8, -1.2, -0.8, -0.3, 0.2, 0.8, 1.5, 2.3, 2.8, 3.1, 2.9, 2.4, 1.8, 1.2, 0.5, -0.2, -0.9, -1.6, -2.2, -2.8, -3.1, -2.9, -2.4, -1.8, -1.1, -0.4, 0.3, 1.0, 1.7, 2.3, 2.8, 3.2, 3.4, 3.1, 2.7, 2.1, 1.4, 0.7, 0.1],
+    "magnitudes": [-2.1, -1.8, -1.2, -0.8, -0.3, 0.2, 0.8, 1.5, 2.3, 2.8, 3.1, 2.9, 2.4, 1.8, 1.2, 0.5, -0.2, -0.9, -1.6, -2.2, -2.8, -3.1, -2.9, -2.4, -1.8, -1.1, -0.4, 0.3, 1.0, 1.7, 2.3, 2.8, 3.2, 3.4, 3.1, 2.7, 2.1, 1.4, 0.7, 0.1],
     "statistics": {
       "mean_difference_db": 0.85,
       "rms_difference_db": 2.12,
@@ -834,12 +834,12 @@ curl -X POST "http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc123
     }
   },
   "individual_analyses": {
-    "recording1_fft": {
+    "file1_fft": {
       "peak_frequency": 1000.0,
       "peak_magnitude": -18.5,
       "spectral_centroid": 1250.3
     },
-    "recording2_fft": {
+    "file2_fft": {
       "peak_frequency": 1200.0,
       "peak_magnitude": -16.2,
       "spectral_centroid": 1420.8
@@ -851,7 +851,7 @@ curl -X POST "http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc123
 
 **Response Fields:**
 - `difference_analysis.frequencies`: Frequency points for the comparison (Hz)
-- `difference_analysis.magnitude_differences`: Magnitude difference (recording2 - recording1) in dB at each frequency
+- `difference_analysis.magnitudes`: Magnitude difference (file1 - file2) in dB at each frequency
 - `difference_analysis.statistics`: Overall statistical analysis of the differences
 - `frequency_bands_analysis`: Difference analysis broken down by standard frequency bands
 - `individual_analyses`: Key metrics from each individual FFT analysis
