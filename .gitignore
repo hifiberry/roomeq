@@ -208,3 +208,5 @@ __marimo__/
 src/oldroomeq
 sample/tannoy/*.png
 src/rust/*.csv
+sample/s?
+
