@@ -26,7 +26,8 @@ script_dir = Path(__file__).parent
 src_dir = script_dir.parent / "src"
 sys.path.insert(0, str(src_dir))
 
-from roomeq.fft import plot_wav_frequency_response
+from roomeq.fft_utils import plot_wav_frequency_response, fft_diff, plot_fft_diff
+from roomeq import fft_rust
 
 
 def find_wav_files(directory: str) -> List[str]:
@@ -52,13 +53,45 @@ def find_wav_files(directory: str) -> List[str]:
     return wav_files
 
 
+def find_signal_recording_pair(directory: str) -> Tuple[str, str, bool]:
+    """
+    Find signal.wav and recording.wav files in the directory.
+    
+    Args:
+        directory: Directory to search in
+        
+    Returns:
+        Tuple of (signal_path, recording_path, found_pair)
+    """
+    signal_path = None
+    recording_path = None
+    
+    # Check for signal.wav (case insensitive)
+    for pattern in ['signal.wav', 'signal.WAV', 'Signal.wav', 'SIGNAL.WAV']:
+        candidate = os.path.join(directory, pattern)
+        if os.path.isfile(candidate):
+            signal_path = candidate
+            break
+    
+    # Check for recording.wav (case insensitive)
+    for pattern in ['recording.wav', 'recording.WAV', 'Recording.wav', 'RECORDING.WAV']:
+        candidate = os.path.join(directory, pattern)
+        if os.path.isfile(candidate):
+            recording_path = candidate
+            break
+    
+    found_pair = signal_path is not None and recording_path is not None
+    return signal_path, recording_path, found_pair
+
+
 def process_wav_files(directory: str, 
                      show_plots: bool = False,
                      window_type: str = 'hann',
                      fft_size: int = None,
                      freq_range: Tuple[float, float] = (20, 20000),
                      mag_range: Tuple[float, float] = None,
-                     output_dir: str = None) -> None:
+                     output_dir: str = None,
+                     backend: str = 'rust') -> None:
     """
     Process all WAV files in directory and create frequency response plots.
     
@@ -70,6 +103,7 @@ def process_wav_files(directory: str,
         freq_range: Frequency range for plots
         mag_range: Magnitude range for plots (None for auto)
         output_dir: Output directory for plots (None to save alongside WAV files)
+        backend: FFT backend to use ('rust' or 'python')
     """
     # Find WAV files
     wav_files = find_wav_files(directory)
@@ -77,6 +111,18 @@ def process_wav_files(directory: str,
     if not wav_files:
         print(f"No WAV files found in directory: {directory}")
         return
+
+    # Check backend availability and show status
+    backend_info = fft_rust.get_backend_info()
+    rust_available = backend_info['rust']['available']
+    
+    if backend == 'rust' and not rust_available:
+        print(f"Warning: Rust backend requested but not available, falling back to Python")
+        backend = 'python'
+    elif backend == 'rust' and rust_available:
+        print(f"Using Rust FFT backend: {backend_info['rust']['binary_path']}")
+    else:
+        print(f"Using Python FFT backend")
     
     print(f"Found {len(wav_files)} WAV file(s) in {directory}")
     print(f"Window: {window_type}, FFT size: {fft_size or 'auto'}")
@@ -100,7 +146,14 @@ def process_wav_files(directory: str,
             
             print(f"[{i}/{len(wav_files)}] Processing: {os.path.basename(wav_path)}")
             
-            # Create frequency response plot
+            # Create frequency response plot using the specified backend
+            if backend == 'rust':
+                # Use the plot function that can leverage the rust backend
+                analyzer_module = fft_rust
+            else:
+                # Use the python backend explicitly
+                from roomeq import fft as analyzer_module
+            
             plot_path = plot_wav_frequency_response(
                 wav_path=wav_path,
                 output_path=output_path,
@@ -108,7 +161,8 @@ def process_wav_files(directory: str,
                 window_type=window_type,
                 fft_size=fft_size,
                 freq_range=freq_range,
-                mag_range=mag_range
+                mag_range=mag_range,
+                analyzer_module=analyzer_module
             )
             
             print(f"    → Saved: {os.path.basename(plot_path)}")
@@ -120,6 +174,71 @@ def process_wav_files(directory: str,
     
     print()
     print(f"Processing complete: {successful} successful, {failed} failed")
+    
+    # Check for signal.wav and recording.wav pair to create difference plot
+    signal_path, recording_path, found_pair = find_signal_recording_pair(directory)
+    
+    if found_pair:
+        print()
+        print("Found signal.wav and recording.wav - creating difference plot...")
+        try:
+            # Analyze both files using the specified backend
+            if backend == 'rust':
+                from roomeq import fft_rust as analyzer_module
+            else:
+                from roomeq import fft as analyzer_module
+            
+            print(f"  Analyzing: {os.path.basename(signal_path)} (reference)")
+            signal_result = analyzer_module.analyze_wav_file(
+                signal_path, window_type=window_type, fft_size=fft_size
+            )
+            
+            print(f"  Analyzing: {os.path.basename(recording_path)} (measurement)")
+            recording_result = analyzer_module.analyze_wav_file(
+                recording_path, window_type=window_type, fft_size=fft_size
+            )
+            
+            # Create difference: recording - signal
+            diff_result = fft_diff(
+                recording_result['fft_analysis'], 
+                signal_result['fft_analysis'],
+                title="Recording vs Signal Difference",
+                description="Difference between recording.wav and signal.wav (recording - signal)"
+            )
+            
+            # Determine output path for difference plot
+            if output_dir:
+                diff_output_path = os.path.join(output_dir, "diff.png")
+            else:
+                diff_output_path = os.path.join(directory, "diff.png")
+            
+            # Create difference plot
+            plot_path = plot_fft_diff(
+                diff_result,
+                output_path=diff_output_path,
+                show_plot=show_plots,
+                freq_range=freq_range,
+                mag_range=mag_range
+            )
+            
+            print(f"  → Difference plot saved: {os.path.basename(plot_path)}")
+            
+            # Print difference statistics
+            if 'statistics' in diff_result:
+                stats = diff_result['statistics']
+                print(f"  → RMS difference: {stats['rms_difference_db']:.2f} dB")
+                print(f"  → Max difference: {stats['max_difference_db']:.2f} dB")
+                print(f"  → Mean difference: {stats['mean_difference_db']:.2f} dB")
+                
+        except Exception as e:
+            print(f"  ✗ Error creating difference plot: {str(e)}")
+    else:
+        if signal_path is None and recording_path is None:
+            print("\nNo signal.wav or recording.wav found - skipping difference analysis")
+        elif signal_path is None:
+            print(f"\nFound recording.wav but missing signal.wav - skipping difference analysis")
+        elif recording_path is None:
+            print(f"\nFound signal.wav but missing recording.wav - skipping difference analysis")
 
 
 def main():
@@ -131,8 +250,8 @@ def main():
 Examples:
   %(prog)s /path/to/recordings/
   %(prog)s . --show
-  %(prog)s recordings --window blackman --freq-range 50 15000
-  %(prog)s samples --output-dir plots --mag-range -60 10
+  %(prog)s recordings --window blackman --freq-range 50 15000 --backend python
+  %(prog)s samples --output-dir plots --mag-range -60 10 --backend rust
         """
     )
     
@@ -159,6 +278,10 @@ Examples:
     
     parser.add_argument('--output-dir', 
                        help='Directory to save plots (default: alongside WAV files)')
+    
+    parser.add_argument('--backend', default='rust',
+                       choices=['rust', 'python'],
+                       help='FFT backend to use (default: rust)')
     
     args = parser.parse_args()
     
@@ -190,7 +313,8 @@ Examples:
             fft_size=args.fft_size,
             freq_range=freq_range,
             mag_range=mag_range,
-            output_dir=args.output_dir
+            output_dir=args.output_dir,
+            backend=args.backend
         )
         
     except KeyboardInterrupt:
