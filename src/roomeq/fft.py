@@ -4,6 +4,7 @@ FFT Analysis Module for RoomEQ Audio Processing
 This module provides Fast Fourier Transform (FFT) analysis functionality for WAV files,
 including spectral analysis, peak detection, frequency band analysis, and windowing functions.
 Core FFT computation and WAV file reading - smoothing and plotting moved to fft_utils.py.
+Uses SciPy FFT for improved performance and accuracy.
 """
 
 import os
@@ -12,6 +13,17 @@ import numpy as np
 from typing import Tuple, Dict, List, Union
 from pathlib import Path
 from . import fft_utils
+
+# Use SciPy FFT for better performance and accuracy
+try:
+    from scipy.fft import fft, rfft, rfftfreq
+    from scipy import signal
+    HAS_SCIPY = True
+except ImportError:
+    # Fallback to numpy FFT if SciPy is not available
+    from numpy.fft import fft, rfft, rfftfreq
+    from numpy import signal
+    HAS_SCIPY = False
 
 try:
     import soundfile as sf
@@ -163,17 +175,31 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
             # Use next power of 2 for efficiency, but limit to reasonable size
             fft_size = min(2**int(np.ceil(np.log2(data_length))), 65536)
         
-        # Apply window function
+        # Apply window function using SciPy signal module
+        window_length = min(data_length, fft_size)
         if window_type == 'hann':
-            window = np.hanning(min(data_length, fft_size))
+            if HAS_SCIPY:
+                window = signal.windows.hann(window_length)
+            else:
+                window = np.hanning(window_length)
         elif window_type == 'hamming':
-            window = np.hamming(min(data_length, fft_size))
+            if HAS_SCIPY:
+                window = signal.windows.hamming(window_length)
+            else:
+                window = np.hamming(window_length)
         elif window_type == 'blackman':
-            window = np.blackman(min(data_length, fft_size))
+            if HAS_SCIPY:
+                window = signal.windows.blackman(window_length)
+            else:
+                window = np.blackman(window_length)
         elif window_type == 'none' or window_type == 'rectangular':
-            window = np.ones(min(data_length, fft_size))
+            window = np.ones(window_length)
         else:
-            window = np.hanning(min(data_length, fft_size))  # Default to Hann
+            # Default to Hann window
+            if HAS_SCIPY:
+                window = signal.windows.hann(window_length)
+            else:
+                window = np.hanning(window_length)
         
         # Prepare audio data for FFT
         if data_length >= fft_size:
@@ -184,8 +210,8 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
             windowed_data = np.zeros(fft_size)
             windowed_data[:data_length] = audio_data * window[:data_length]
         
-        # Compute FFT
-        fft_result = np.fft.rfft(windowed_data)
+        # Compute FFT using SciPy (or numpy fallback)
+        fft_result = rfft(windowed_data)
         
         # Calculate window normalization factors (for the actual window used)
         actual_window = window[:len(windowed_data)] if len(windowed_data) < len(window) else window
@@ -207,8 +233,8 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
             if fft_size % 2 == 0 and len(magnitude) > 1:  # If even FFT size, don't double Nyquist
                 magnitude[-1] /= 2
         
-        # Normalize by window power sum for proper amplitude scaling
-        magnitude = magnitude / np.sqrt(window_power_sum)
+        # Normalize by window sum for proper amplitude scaling (coherent gain correction)
+        magnitude = magnitude / window_sum
         
         # For frequency response analysis, convert magnitude to dB
         # Use 20*log10 for magnitude (not power) to get proper frequency response
@@ -219,8 +245,8 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
         # Compute phase spectrum
         phase = np.angle(fft_result)
         
-        # Create frequency axis
-        frequencies = np.fft.rfftfreq(fft_size, 1/sample_rate)
+        # Create frequency axis using SciPy (or numpy fallback)
+        frequencies = rfftfreq(fft_size, 1/sample_rate)
         
         # Compute spectral statistics
         total_power = np.sum(magnitude**2)
@@ -412,8 +438,8 @@ def compute_fft_time_averaged(audio_data: np.ndarray, sample_rate: int, window_t
                 if win_len % 2 == 0 and len(mag) > 1:
                     mag[-1] /= 2
 
-            # Normalize by window power for amplitude, then power
-            mag = mag / np.sqrt(window_power_sum)
+            # Normalize by window sum for proper amplitude scaling (coherent gain correction)
+            mag = mag / window_sum
             power = mag * mag
             acc_power += power
             seg_count += 1
@@ -553,7 +579,8 @@ def compute_fft_time_averaged(audio_data: np.ndarray, sample_rate: int, window_t
 
 def analyze_wav_file(filepath: str, window_type: str = 'hann', fft_size: int = None,
                      start_time: float = 0.0, duration: float = None, normalize: float = None, 
-                     points_per_octave: int = None, psychoacoustic_smoothing: float = None) -> Dict:
+                     points_per_octave: int = None, psychoacoustic_smoothing: float = None,
+                     use_time_averaging: bool = None) -> Dict:
     """
     Complete FFT analysis of a WAV file with time windowing support.
     
@@ -566,6 +593,7 @@ def analyze_wav_file(filepath: str, window_type: str = 'hann', fft_size: int = N
         normalize: Frequency in Hz to normalize to 0 dB, None for no normalization
         points_per_octave: If specified, summarize FFT into log frequency buckets
         psychoacoustic_smoothing: If specified, apply psychoacoustic smoothing (factor 0.5-2.0)
+        use_time_averaging: If True, use time-averaged FFT (better for sweeps). If None, auto-detect.
         
     Returns:
         Dict containing file info and FFT analysis
@@ -590,9 +618,24 @@ def analyze_wav_file(filepath: str, window_type: str = 'hann', fft_size: int = N
         else:
             audio_data = audio_data[start_sample:]
     
+    # Auto-detect if time averaging should be used
+    if use_time_averaging is None:
+        # Use time averaging for longer signals that might be sweeps
+        # and when we have enough data for multiple segments
+        signal_duration = len(audio_data) / sample_rate
+        suggested_fft_size = fft_size if fft_size is not None else min(32768, len(audio_data))
+        potential_segments = len(audio_data) // (suggested_fft_size // 4)  # 75% overlap
+        use_time_averaging = signal_duration > 2.0 and potential_segments >= 8
+    
     # Perform FFT analysis
-    fft_result = compute_fft(audio_data, sample_rate, window_type, fft_size, normalize, 
-                           points_per_octave, psychoacoustic_smoothing)
+    if use_time_averaging:
+        fft_result = compute_fft_time_averaged(audio_data, sample_rate, window_type, fft_size, 
+                                             overlap=0.75, normalize=normalize, 
+                                             points_per_octave=points_per_octave, 
+                                             psychoacoustic_smoothing=psychoacoustic_smoothing)
+    else:
+        fft_result = compute_fft(audio_data, sample_rate, window_type, fft_size, normalize, 
+                               points_per_octave, psychoacoustic_smoothing)
     
     return {
         'file_info': {
@@ -609,6 +652,17 @@ def analyze_wav_file(filepath: str, window_type: str = 'hann', fft_size: int = N
 def get_supported_window_types() -> List[str]:
     """Get list of supported window function types."""
     return ['hann', 'hamming', 'blackman', 'none', 'rectangular']
+
+
+def get_fft_backend_info() -> Dict[str, Union[str, bool]]:
+    """Get information about the FFT backend being used."""
+    return {
+        'backend': 'scipy' if HAS_SCIPY else 'numpy',
+        'fft_module': 'scipy.fft' if HAS_SCIPY else 'numpy.fft',
+        'window_module': 'scipy.signal.windows' if HAS_SCIPY else 'numpy (legacy)',
+        'scipy_available': HAS_SCIPY,
+        'description': 'High-performance SciPy FFT' if HAS_SCIPY else 'NumPy FFT fallback'
+    }
 
 
 def validate_fft_parameters(fft_size: int = None, window_type: str = 'hann') -> Dict[str, Union[int, str]]:

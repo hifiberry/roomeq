@@ -302,7 +302,8 @@ def compute_fft_time_averaged(audio_data: np.ndarray, sample_rate: int, window_t
 
 def analyze_wav_file(filepath: str, window_type: str = 'hann', fft_size: int = None,
                      start_time: float = 0.0, duration: float = None, normalize: float = None, 
-                     points_per_octave: int = None, psychoacoustic_smoothing: float = None) -> Dict:
+                     points_per_octave: int = None, psychoacoustic_smoothing: float = None,
+                     use_time_averaging: bool = None) -> Dict:
     """
     Complete FFT analysis of a WAV file with time windowing support.
     
@@ -325,7 +326,7 @@ def analyze_wav_file(filepath: str, window_type: str = 'hann', fft_size: int = N
     """
     return fft_python.analyze_wav_file(
         filepath, window_type, fft_size, start_time, duration, normalize,
-        points_per_octave, psychoacoustic_smoothing
+        points_per_octave, psychoacoustic_smoothing, use_time_averaging
     )
 
 
