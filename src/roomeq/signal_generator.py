@@ -117,6 +117,66 @@ class SignalGenerator:
         logger.debug(f"Generated noise file: {tmp_path}")
         return tmp_path
     
+    def generate_sweep_file(self, start_freq: float = 20.0, end_freq: float = 20000.0, 
+                           duration: float = 5.0, amplitude: float = 0.5, 
+                           compensation_mode: str = 'sqrt_f', sweeps: int = 1) -> str:
+        """
+        Generate sine sweep(s) and save to a temporary WAV file.
+        
+        Args:
+            start_freq: Starting frequency in Hz
+            end_freq: Ending frequency in Hz
+            duration: Duration per sweep in seconds
+            amplitude: Amplitude scaling (0.0 to 1.0)
+            compensation_mode: Amplitude compensation mode ('none', 'inv_sqrt_f', 'sqrt_f')
+            sweeps: Number of consecutive sweeps
+            
+        Returns:
+            Path to the generated WAV file
+        """
+        import wave
+        
+        # Generate sweep samples for single sweep
+        duration_samples = int(duration * self.sample_rate)
+        single_sweep = self._generate_sine_sweep(
+            start_freq, end_freq, duration_samples, amplitude, compensation_mode
+        )
+        
+        # Create multiple sweeps if requested
+        if sweeps > 1:
+            all_sweeps = []
+            for i in range(sweeps):
+                all_sweeps.append(single_sweep)
+                # Add small gap between sweeps (50ms)
+                if i < sweeps - 1:
+                    gap_samples = int(0.05 * self.sample_rate)
+                    if self.channels == 2:
+                        gap = np.zeros((gap_samples, 2), dtype=np.int16)
+                    else:
+                        gap = np.zeros(gap_samples, dtype=np.int16)
+                    all_sweeps.append(gap)
+            
+            # Concatenate all sweeps
+            if self.channels == 2:
+                sweep_samples = np.vstack(all_sweeps)
+            else:
+                sweep_samples = np.concatenate(all_sweeps)
+        else:
+            sweep_samples = single_sweep
+        
+        # Create temporary filename
+        tmp_path = os.path.join('/tmp', f"roomeq_sweep_{uuid.uuid4().hex}.wav")
+        
+        # Write to WAV file
+        with wave.open(tmp_path, 'wb') as wf:
+            wf.setnchannels(self.channels)
+            wf.setsampwidth(2)  # 16-bit
+            wf.setframerate(self.sample_rate)
+            wf.writeframes(sweep_samples.tobytes())
+        
+        logger.debug(f"Generated sweep file: {tmp_path} ({sweeps} sweeps, {start_freq}-{end_freq} Hz)")
+        return tmp_path
+    
     def _generate_sine_sweep(self, f_start, f_end, duration_samples, amplitude, compensation_mode: str = 'inv_sqrt_f'):
         """
         Generate a logarithmic sine sweep with proper amplitude normalization.
