@@ -1,8 +1,49 @@
-# RoomEQ Rust Optimizer
+# RoomEQ Rust Optimizer & FFT Analyzer
 
-A high-performance Rust implementation of the RoomEQ optimization algorithm for real-time audio processing.
+A high-performance Rust implementation of the RoomEQ optimization algorithm and FFT analysis tools for real-time audio processing and room acoustic analysis.
 
-## Features
+## Binaries
+
+### roomeq-optimizer
+The main room EQ optimizer that finds optimal DSP filter parameters to correct room acoustics.
+
+### roomeq-analyzer (NEW!)
+High-performance FFT analysis tool - a Rust port of HiFiBerry's original C FFT analyzer for audio measurements and frequency response analysis.
+
+## FFT Analyzer Features
+
+- **High Performance**: Optimized Rust implementation with release-mode builds (< 1 second analysis)
+- **Multi-file Support**: Analyze multiple WAV files against a reference
+- **Logarithmic Frequency Binning**: Reduces FFT data to manageable points with perceptually relevant spacing  
+- **Reference Comparison**: Compare recordings against known reference signals
+- **CSV Export**: Output frequency response data in standard CSV format
+- **Configurable Analysis**: Adjustable frequency range, output points, and verbosity
+
+## FFT Analyzer Quick Start
+
+```bash
+# Build the analyzer
+cargo build --bin roomeq-analyzer --release
+
+# Basic analysis
+./target/release/roomeq-analyzer \
+  -r reference.wav \
+  -n 64 \
+  -o output.csv \
+  recording1.wav recording2.wav
+
+# Advanced analysis with custom parameters
+./target/release/roomeq-analyzer \
+  --reference signal.wav \
+  --verbose 2 \
+  --points 128 \
+  --freq-min 20 \
+  --freq-max 20000 \
+  --output room_response.csv \
+  measurement1.wav measurement2.wav
+```
+
+## RoomEQ Optimizer Features
 
 - **High Performance**: Optimized Rust implementation for fast processing
 - **Real-time Progress**: Step-by-step optimization progress via JSON output
