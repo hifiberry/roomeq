@@ -453,9 +453,10 @@ POST /audio/sweep/start?start_freq=20&end_freq=20000&duration=8&sweeps=2&amplitu
   "sweeps": 3,
   "total_duration": 15.0,
   "amplitude": 0.3,
-    "compensation_mode": "sqrt_f",
-    "generator": "native",
+  "compensation_mode": "sqrt_f",
+  "generator": "native",
   "device": "default",
+  "filename": "roomeq_sweep_abc123def456.wav",
   "stop_time": "2025-08-15T12:30:45.123456",
   "message": "3 sine sweep(s) started: 100.0 Hz → 8000.0 Hz, 5.0s each (total: 15.0s)"
 }
