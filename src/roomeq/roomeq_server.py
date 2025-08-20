@@ -179,7 +179,6 @@ def get_version():
             "Frequency deduplication and intelligent candidate generation",
             "Adaptive high-pass filter placement",
             "Usable frequency range detection",
-            "Psychoacoustic weighting and error calculation",
             "Parametric EQ filter generation (biquad coefficients)",
             "Multiple optimizer presets with different smoothing characteristics",
             "Real-time streaming optimization progress (no buffering)"
@@ -372,7 +371,6 @@ def analyze_fft():
     duration_str = request.args.get("duration")
     normalize_str = request.args.get("normalize")
     points_per_octave_str = request.args.get("points_per_octave")
-    psychoacoustic_smoothing_str = request.args.get("psychoacoustic_smoothing")
     
     # Validate parameters
     if not filename and not filepath:
@@ -434,9 +432,6 @@ def analyze_fft():
         except ValueError:
             abort(400, "Invalid points_per_octave: must be an integer")
     
-    psychoacoustic_smoothing = None
-    if psychoacoustic_smoothing_str:
-        psychoacoustic_smoothing = validate_float_param("psychoacoustic_smoothing", psychoacoustic_smoothing_str, 0.1, 5.0)
     
     try:
         # Validate parameters using FFT module
@@ -444,7 +439,7 @@ def analyze_fft():
         
         # Use FFT module for analysis
         result = analyze_wav_file(target_file, window_type, fft_size, start_time, duration, normalize, 
-                                points_per_octave, psychoacoustic_smoothing)
+                                points_per_octave)
         
         # Prepare response
         response = {
@@ -501,7 +496,6 @@ def analyze_fft_recording(recording_id: str):
         duration_str = request.args.get("duration")
         normalize_str = request.args.get("normalize")
         points_per_octave_str = request.args.get("points_per_octave")
-        psychoacoustic_smoothing_str = request.args.get("psychoacoustic_smoothing")
         
         logger.debug(f"FFT analysis parameters for {recording_id}: window={window_type}, "
                     f"fft_size={fft_size_str}, start_time={start_time_str}, start_at={start_at_str}, "
@@ -547,9 +541,6 @@ def analyze_fft_recording(recording_id: str):
             except ValueError:
                 abort(400, "Invalid points_per_octave: must be an integer")
         
-        psychoacoustic_smoothing = None
-        if psychoacoustic_smoothing_str:
-            psychoacoustic_smoothing = validate_float_param("psychoacoustic_smoothing", psychoacoustic_smoothing_str, 0.1, 5.0)
         
         # Validate parameters using FFT module
         validate_fft_parameters(fft_size, window_type)
@@ -558,7 +549,7 @@ def analyze_fft_recording(recording_id: str):
         
         # Use FFT module for analysis
         result = analyze_wav_file(filepath, window_type, fft_size, start_time, duration, normalize, 
-                                points_per_octave, psychoacoustic_smoothing)
+                                points_per_octave)
         
         # Prepare response with recording context
         response = {
@@ -631,7 +622,6 @@ def analyze_fft_diff():
         duration_str = request.args.get("duration")
         normalize_str = request.args.get("normalize")
         points_per_octave_str = request.args.get("points_per_octave")
-        psychoacoustic_smoothing_str = request.args.get("psychoacoustic_smoothing")
         
         # Handle both start_time and start_at (start_at takes precedence if both provided)
         if start_at_str and start_time_str and start_time_str != "0":
@@ -669,9 +659,6 @@ def analyze_fft_diff():
             except ValueError:
                 abort(400, "Invalid points_per_octave: must be an integer")
         
-        psychoacoustic_smoothing = None
-        if psychoacoustic_smoothing_str:
-            psychoacoustic_smoothing = validate_float_param("psychoacoustic_smoothing", psychoacoustic_smoothing_str, 0.1, 5.0)
         
         
         logger.info(f"FFT difference analysis requested between files")
@@ -789,13 +776,13 @@ def analyze_fft_diff():
         
         # Analyze first file
         result1 = analyze_wav_file(file1_path, window_type, fft_size, start_time, duration, normalize, 
-                                 points_per_octave, psychoacoustic_smoothing)
+                                 points_per_octave)
         
         logger.info(f"Analyzing file 2 ({file2_info['source_type']}): {file2_path}")
         
         # Analyze second file
         result2 = analyze_wav_file(file2_path, window_type, fft_size, start_time, duration, normalize, 
-                                 points_per_octave, psychoacoustic_smoothing)
+                                 points_per_octave)
         
         logger.info(f"Computing FFT difference between files")
         
@@ -827,7 +814,6 @@ def analyze_fft_diff():
                     "window_type": window_type,
                     "fft_size": result1["fft_analysis"]["fft_size"],
                     "points_per_octave": points_per_octave,
-                    "psychoacoustic_smoothing": psychoacoustic_smoothing,
                     "normalize": normalize,
                     "start_time": start_time,
                     "analyzed_duration": result1["file_info"]["analyzed_duration"],
@@ -1764,15 +1750,13 @@ def root():
                     "duration": "Analyze duration in seconds (0.1-300, default: entire file)",
                     "normalize": "Normalize to frequency in Hz (0.1-50000, optional)",
                     "points_per_octave": "Summarize to log frequency buckets (1-100, optional)",
-                    "psychoacoustic_smoothing": "Apply psychoacoustic smoothing (0.1-5.0, optional)"
                 },
                 "examples": {
                     "basic": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav'",
                     "with_start_at": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&start_at=2.5&duration=10'",
                     "with_summarization": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&points_per_octave=16'",
                     "external_file": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filepath=/path/to/file.wav&window=hann&normalize=1000'",
-                    "with_psychoacoustic_smoothing": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&psychoacoustic_smoothing=1.0&points_per_octave=16'",
-                    "recording_analysis": "curl -X POST 'http://localhost:10315/audio/analyze/fft-recording/abc12345?points_per_octave=12&start_at=1.0&psychoacoustic_smoothing=1.5'",
+                    "recording_analysis": "curl -X POST 'http://localhost:10315/audio/analyze/fft-recording/abc12345?points_per_octave=12&start_at=1.0'",
                     "difference_analysis": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc12345&recording_id2=def67890&points_per_octave=16'"
                 }
             },
@@ -1794,14 +1778,13 @@ def root():
                     "duration": "Analyze duration in seconds (0.1-300, default: entire file)",
                     "normalize": "Normalize to frequency in Hz (0.1-50000, optional)",
                     "points_per_octave": "Summarize to log frequency buckets (1-100, optional)",
-                    "psychoacoustic_smoothing": "Apply psychoacoustic smoothing (0.1-5.0, optional)"
                 },
                 "examples": {
                     "recording_ids": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc12345&recording_id2=def67890'",
                     "filenames": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?filename1=noise_abc123.wav&filename2=recording_def456.wav'", 
                     "filepaths": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?filepath1=/tmp/file1.wav&filepath2=/tmp/file2.wav'",
                     "mixed_types": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc12345&filename2=noise_def456.wav'",
-                    "with_options": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?filename1=noise_signal.wav&filename2=room_recording.wav&points_per_octave=16&psychoacoustic_smoothing=1.0'",
+                    "with_options": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?filename1=noise_signal.wav&filename2=room_recording.wav&points_per_octave=16'",
                     "time_segment": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc12345&recording_id2=def67890&start_at=2.0&duration=5.0'"
                 },
                 "use_cases": [
@@ -2014,7 +1997,6 @@ def root():
                             "window_type": "hann",
                             "fft_size": 32768,
                             "points_per_octave": 16,
-                            "psychoacoustic_smoothing": None,
                             "normalize": None
                         }
                     },
@@ -2061,7 +2043,7 @@ def root():
                         },
                         "weighted_flat": {
                             "name": "Weighted Flat",
-                            "description": "Flat response with psychoacoustic weighting"
+                            "description": "Flat response with frequency weighting"
                         },
                         "harman": {
                             "name": "Harman Target Curve",
@@ -2180,7 +2162,7 @@ def root():
             "difference_statistics": "RMS, maximum, mean difference calculations with frequency range analysis",
             "eq_optimization": "Rust-based high-performance optimization with multiple target curves, real-time progress reporting, and frequency response calculation",
             "eq_filters": "Biquad parametric EQ filters with peaking, high-pass, low-shelf, and high-shelf types",
-            "optimization_algorithms": "Advanced curve fitting with psychoacoustic smoothing and frequency-weighted error minimization",
+            "optimization_algorithms": "Advanced curve fitting with frequency weighting and frequency-weighted error minimization",
             "file_management": "Automatic temporary file generation and cleanup for noise signals",
             "cors_support": "Cross-origin requests enabled for web applications"
         },
