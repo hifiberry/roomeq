@@ -655,21 +655,24 @@ def analyze_fft_diff():
             }
         elif filename1:
             # Look for filename in recording directory (includes generated files)
+            # Extract just the filename part in case a full path was provided
+            search_filename = os.path.basename(filename1)
+            
             from .recording import recording_manager
             recording_files = recording_manager.get_completed_recordings()
             matching_file = None
             for rec_id, rec_data in recording_files.items():
-                if rec_data["filename"] == filename1:
+                if rec_data["filename"] == search_filename:
                     matching_file = rec_data
                     matching_file["recording_id"] = rec_id  # Add the recording ID
                     break
             if matching_file is None:
-                abort(404, f"File '{filename1}' not found")
+                abort(404, f"File '{search_filename}' not found in recordings")
             file1_path = matching_file["filepath"]
             file1_info = {
                 "source_type": "filename",
                 "identifier": filename1,
-                "filename": filename1,
+                "filename": search_filename,
                 "timestamp": matching_file.get("timestamp"),
                 "file_type": matching_file.get("file_type", "recording")
             }
@@ -699,21 +702,24 @@ def analyze_fft_diff():
             }
         elif filename2:
             # Look for filename in recording directory (includes generated files)
+            # Extract just the filename part in case a full path was provided
+            search_filename = os.path.basename(filename2)
+            
             from .recording import recording_manager
             recording_files = recording_manager.get_completed_recordings()
             matching_file = None
             for rec_id, rec_data in recording_files.items():
-                if rec_data["filename"] == filename2:
+                if rec_data["filename"] == search_filename:
                     matching_file = rec_data
                     matching_file["recording_id"] = rec_id  # Add the recording ID
                     break
             if matching_file is None:
-                abort(404, f"File '{filename2}' not found")
+                abort(404, f"File '{search_filename}' not found in recordings")
             file2_path = matching_file["filepath"]
             file2_info = {
                 "source_type": "filename", 
                 "identifier": filename2,
-                "filename": filename2,
+                "filename": search_filename,
                 "timestamp": matching_file.get("timestamp"),
                 "file_type": matching_file.get("file_type", "recording")
             }
@@ -1723,7 +1729,7 @@ def root():
                 "parameters": {
                     "filename": "Recorded filename (use with recording system)",
                     "filepath": "External WAV file path (alternative to filename)",
-                    "window": "Window function (hann|hamming|blackman|rectangular, default: hann)",
+                    "window": "Window function (hann|hamming|blackman|rectangular|none, default: hann)",
                     "fft_size": "FFT size, power of 2 (64-65536, default: auto)",
                     "start_time": "Start analysis at time in seconds (default: 0)",
                     "start_at": "Alternative to start_time - start analysis at time in seconds (default: 0)",
@@ -1753,7 +1759,7 @@ def root():
                     "recording_id2": "Second recording ID (mutually exclusive with filename2/filepath2)",
                     "filename2": "Second filename in recording directory (mutually exclusive with recording_id2/filepath2)",
                     "filepath2": "Full path to second file (mutually exclusive with recording_id2/filename2)",
-                    "window": "Window function (hann|hamming|blackman|rectangular, default: hann)",
+                    "window": "Window function (hann|hamming|blackman|rectangular|none, default: hann)",
                     "fft_size": "FFT size, power of 2 (64-65536, default: auto)",
                     "start_time": "Start analysis at time in seconds (default: 0)",
                     "start_at": "Alternative to start_time - start analysis at time in seconds (default: 0)",
