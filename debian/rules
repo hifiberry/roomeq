@@ -8,6 +8,9 @@ export PYBUILD_NAME=roomeq
 override_dh_auto_build:
 	# Build Python package
 	dh_auto_build
+	# Generate signal files
+	mkdir -p $(CURDIR)/debian/signals
+	python3 $(CURDIR)/debian/generate-signals.py $(CURDIR)/debian/signals
 	# Create temporary directory for Rust installation
 	mkdir -p $(CURDIR)/rust_temp
 	# Install latest Rust using rustup with explicit home directory
@@ -37,6 +40,8 @@ override_dh_strip:
 override_dh_auto_clean:
 	# Clean Python build
 	dh_auto_clean
+	# Clean generated signals
+	rm -rf $(CURDIR)/debian/signals || true
 	# Clean Rust build artifacts but preserve Cargo.lock for reproducible builds
 	cd src/rust && rm -rf target/ || true
 	# Clean temporary Rust installation
