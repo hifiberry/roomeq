@@ -86,6 +86,36 @@ class SignalGenerator:
         samples = (noise * 32767).astype(np.int16)
         
         return samples
+
+    def generate_noise_file(self, duration: float = 3.0, amplitude: float = 0.5) -> str:
+        """
+        Generate white noise and save to a temporary WAV file.
+        
+        Args:
+            duration: Duration in seconds
+            amplitude: Amplitude scaling (0.0 to 1.0)
+            
+        Returns:
+            Path to the generated WAV file
+        """
+        import wave
+        
+        # Generate noise samples
+        duration_samples = int(duration * self.sample_rate)
+        noise_samples = self._generate_noise(duration_samples, amplitude)
+        
+        # Create temporary filename
+        tmp_path = os.path.join('/tmp', f"roomeq_noise_{uuid.uuid4().hex}.wav")
+        
+        # Write to WAV file
+        with wave.open(tmp_path, 'wb') as wf:
+            wf.setnchannels(self.channels)
+            wf.setsampwidth(2)  # 16-bit
+            wf.setframerate(self.sample_rate)
+            wf.writeframes(noise_samples.tobytes())
+        
+        logger.debug(f"Generated noise file: {tmp_path}")
+        return tmp_path
     
     def _generate_sine_sweep(self, f_start, f_end, duration_samples, amplitude, compensation_mode: str = 'inv_sqrt_f'):
         """

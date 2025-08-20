@@ -17,6 +17,7 @@ from pathlib import Path
 
 # Local imports
 from .fft import load_wav_file, compute_fft, analyze_wav_file, validate_fft_parameters
+from .fft_utils import fft_diff
 from .recording import (
     recording_manager, 
     start_recording, 
@@ -553,6 +554,161 @@ def analyze_fft_recording(recording_id: str):
         abort(500, f"FFT analysis failed: {str(e)}")
 
 
+@app.route("/audio/analyze/fft-diff", methods=["POST"])
+def analyze_fft_diff():
+    """Perform FFT difference analysis between two recordings."""
+    
+    try:
+        # Get request parameters
+        recording_id1 = request.args.get("recording_id1")
+        recording_id2 = request.args.get("recording_id2")
+        
+        if not recording_id1 or not recording_id2:
+            abort(400, "Both recording_id1 and recording_id2 parameters are required")
+        
+        if recording_id1 == recording_id2:
+            abort(400, "recording_id1 and recording_id2 must be different")
+        
+        # Get optional FFT parameters
+        window_type = request.args.get("window", "hann")
+        fft_size_str = request.args.get("fft_size")
+        start_time_str = request.args.get("start_time", "0")
+        start_at_str = request.args.get("start_at")
+        duration_str = request.args.get("duration")
+        normalize_str = request.args.get("normalize")
+        points_per_octave_str = request.args.get("points_per_octave")
+        psychoacoustic_smoothing_str = request.args.get("psychoacoustic_smoothing")
+        
+        # Handle both start_time and start_at (start_at takes precedence if both provided)
+        if start_at_str and start_time_str and start_time_str != "0":
+            logger.warning("Both start_time and start_at provided. Using start_at and ignoring start_time")
+        
+        start_time = 0.0
+        if start_at_str:
+            start_time = validate_float_param("start_at", start_at_str, 0.0, 300.0)
+        elif start_time_str:
+            start_time = validate_float_param("start_time", start_time_str, 0.0, 300.0)
+        
+        duration = None
+        if duration_str:
+            duration = validate_float_param("duration", duration_str, 0.1, 300.0)
+        
+        fft_size = None
+        if fft_size_str:
+            try:
+                fft_size = int(fft_size_str)
+                if fft_size < 64 or fft_size > 65536 or (fft_size & (fft_size - 1)) != 0:
+                    abort(400, "fft_size must be a power of 2 between 64 and 65536")
+            except ValueError:
+                abort(400, "Invalid fft_size: must be an integer")
+        
+        normalize = None
+        if normalize_str:
+            normalize = validate_float_param("normalize", normalize_str, 0.1, 50000.0)
+        
+        points_per_octave = None
+        if points_per_octave_str:
+            try:
+                points_per_octave = int(points_per_octave_str)
+                if points_per_octave < 1 or points_per_octave > 100:
+                    abort(400, "points_per_octave must be between 1 and 100")
+            except ValueError:
+                abort(400, "Invalid points_per_octave: must be an integer")
+        
+        psychoacoustic_smoothing = None
+        if psychoacoustic_smoothing_str:
+            psychoacoustic_smoothing = validate_float_param("psychoacoustic_smoothing", psychoacoustic_smoothing_str, 0.1, 5.0)
+        
+        logger.info(f"FFT difference analysis requested between recordings {recording_id1} and {recording_id2}")
+        
+        # Get recording statuses
+        recording_status1 = get_recording_status(recording_id1)
+        if recording_status1 is None:
+            abort(404, f"Recording {recording_id1} not found")
+        if recording_status1["status"] != "completed":
+            abort(400, f"Recording {recording_id1} is not completed")
+        
+        recording_status2 = get_recording_status(recording_id2)
+        if recording_status2 is None:
+            abort(404, f"Recording {recording_id2} not found")
+        if recording_status2["status"] != "completed":
+            abort(400, f"Recording {recording_id2} is not completed")
+        
+        # Get filepaths and validate they exist
+        filepath1 = recording_status1["filepath"]
+        filepath2 = recording_status2["filepath"]
+        
+        if not os.path.exists(filepath1):
+            abort(404, f"Recording file for {recording_id1} no longer exists")
+        if not os.path.exists(filepath2):
+            abort(404, f"Recording file for {recording_id2} no longer exists")
+        
+        # Validate parameters using FFT module
+        validate_fft_parameters(fft_size, window_type)
+        
+        logger.info(f"Analyzing recording 1: {filepath1}")
+        
+        # Analyze first recording
+        result1 = analyze_wav_file(filepath1, window_type, fft_size, start_time, duration, normalize, 
+                                 points_per_octave, psychoacoustic_smoothing)
+        
+        logger.info(f"Analyzing recording 2: {filepath2}")
+        
+        # Analyze second recording
+        result2 = analyze_wav_file(filepath2, window_type, fft_size, start_time, duration, normalize, 
+                                 points_per_octave, psychoacoustic_smoothing)
+        
+        logger.info(f"Computing FFT difference between recordings")
+        
+        # Compute difference using fft_utils
+        diff_result = fft_diff(result1, result2, 
+                              title=f"Difference: {recording_id1} vs {recording_id2}",
+                              description=f"FFT difference analysis between {recording_status1['filename']} and {recording_status2['filename']}")
+        
+        # Prepare comprehensive response
+        response = {
+            "status": "success",
+            "recording_info": {
+                "recording_id1": recording_id1,
+                "filename1": recording_status1["filename"],
+                "timestamp1": recording_status1["timestamp"],
+                "recording_id2": recording_id2,
+                "filename2": recording_status2["filename"],
+                "timestamp2": recording_status2["timestamp"]
+            },
+            "analysis_info": {
+                "analyzed_duration": result1["file_info"]["analyzed_duration"],
+                "analyzed_samples": result1["file_info"]["analyzed_samples"],
+                "start_time": start_time,
+                "analysis_parameters": {
+                    "window_type": window_type,
+                    "fft_size": result1["fft_analysis"]["fft_size"],
+                    "points_per_octave": points_per_octave,
+                    "psychoacoustic_smoothing": psychoacoustic_smoothing,
+                    "normalize": normalize
+                }
+            },
+            "fft_difference": diff_result,
+            "analysis_timestamp": datetime.now().isoformat()
+        }
+        
+        logger.info(f"FFT difference analysis completed between {recording_id1} and {recording_id2}: "
+                   f"RMS difference: {diff_result['statistics']['rms_difference_db']:.2f} dB, "
+                   f"Max difference: {diff_result['statistics']['max_difference_db']:.2f} dB")
+        
+        return jsonify(response)
+        
+    except ValueError as e:
+        logger.error(f"FFT difference analysis parameter error: {e}")
+        abort(400, str(e))
+    except RuntimeError as e:
+        logger.error(f"FFT difference analysis runtime error: {e}")
+        abort(500, str(e))
+    except Exception as e:
+        logger.error(f"FFT difference analysis error: {e}")
+        abort(500, f"FFT difference analysis failed: {str(e)}")
+
+
 @app.route("/audio/record/start", methods=["POST"])
 def start_recording_endpoint():
     """Start recording audio to a WAV file in background."""
@@ -924,6 +1080,9 @@ def start_noise():
         # Set stop time for monitoring
         stop_time = datetime.now() + timedelta(seconds=duration)
         
+        # Generate noise file for playback
+        noise_filename = _signal_generator.generate_noise_file(duration=duration, amplitude=amplitude)
+        
         # Update playback state
         _playback_state.update({
             'active': True,
@@ -935,7 +1094,8 @@ def start_noise():
             'end_freq': None,
             'sweeps': None,
             'sweep_duration': None,
-            'total_duration': duration
+            'total_duration': duration,
+            'filename': noise_filename
         })
         
         # Start playing noise with the actual duration (no infinite duration)
@@ -952,6 +1112,7 @@ def start_noise():
             "duration": duration,
             "amplitude": amplitude,
             "device": device or "default",
+            "filename": noise_filename,
             "stop_time": stop_time.isoformat(),
             "message": f"Noise playback started for {duration} seconds"
         })
@@ -1036,7 +1197,8 @@ def get_noise_status():
         "amplitude": _playback_state['amplitude'],
         "device": _playback_state['device'] or "default",
         "remaining_seconds": round(remaining_time, 1),
-        "stop_time": _playback_state['stop_time'].isoformat() if _playback_state['stop_time'] else None
+        "stop_time": _playback_state['stop_time'].isoformat() if _playback_state['stop_time'] else None,
+        "filename": _playback_state.get('filename')
     }
     
     # Add frequency information for sine sweeps
@@ -1216,16 +1378,17 @@ def root():
     """Root endpoint with comprehensive API information."""
     return jsonify({
         "message": "RoomEQ Audio Processing API",
-        "version": "0.5.0",
+        "version": "0.6.0",
         "framework": "Flask",
-        "description": "REST API for microphone detection, SPL measurement, audio signal generation, recording, FFT analysis, and automatic room EQ optimization with real-time progress reporting",
+        "description": "REST API for microphone detection, SPL measurement, audio signal generation, recording, FFT analysis, difference analysis, and automatic room EQ optimization with real-time progress reporting",
         "features": [
             "Automatic microphone detection with sensitivity and gain information",
             "Real-time SPL (Sound Pressure Level) measurement",
-            "White noise generation with keep-alive control",
+            "White noise generation with keep-alive control and file tracking",
             "Logarithmic sine sweep generation with multiple repeat support",
             "Background audio recording to WAV files with secure file management",
             "FFT spectral analysis with dB output, frequency normalization, and logarithmic frequency summarization",
+            "FFT difference analysis for comparing two recordings with detailed statistics",
             "Automatic room EQ optimization with multiple target curves and optimizer presets",
             "Real-time optimization progress reporting with step-by-step updates",
             "Biquad filter generation for parametric EQ implementation",
@@ -1267,7 +1430,8 @@ def root():
             },
             "fft_analysis": {
                 "/audio/analyze/fft": "Analyze WAV file with FFT (by filename or filepath)",
-                "/audio/analyze/fft-recording/<recording_id>": "Analyze recorded file with FFT by recording ID"
+                "/audio/analyze/fft-recording/<recording_id>": "Analyze recorded file with FFT by recording ID",
+                "/audio/analyze/fft-diff": "Compare two recordings with FFT difference analysis"
             },
             "eq_optimization": {
                 "/eq/presets/targets": "List available target response curves",
@@ -1398,8 +1562,37 @@ def root():
                     "with_summarization": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&points_per_octave=16'",
                     "external_file": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filepath=/path/to/file.wav&window=hann&normalize=1000'",
                     "with_psychoacoustic_smoothing": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&psychoacoustic_smoothing=1.0&points_per_octave=16'",
-                    "recording_analysis": "curl -X POST 'http://localhost:10315/audio/analyze/fft-recording/abc12345?points_per_octave=12&start_at=1.0&psychoacoustic_smoothing=1.5'"
+                    "recording_analysis": "curl -X POST 'http://localhost:10315/audio/analyze/fft-recording/abc12345?points_per_octave=12&start_at=1.0&psychoacoustic_smoothing=1.5'",
+                    "difference_analysis": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc12345&recording_id2=def67890&points_per_octave=16'"
                 }
+            },
+            "fft_difference_analysis": {
+                "description": "Compare two recordings using FFT difference analysis to identify signal processing effects",
+                "method": "POST",
+                "url": "/audio/analyze/fft-diff",
+                "parameters": {
+                    "recording_id1": "First recording ID (required)",
+                    "recording_id2": "Second recording ID (required, different from recording_id1)",
+                    "window": "Window function (hann|hamming|blackman|rectangular, default: hann)",
+                    "fft_size": "FFT size, power of 2 (64-65536, default: auto)",
+                    "start_time": "Start analysis at time in seconds (default: 0)",
+                    "start_at": "Alternative to start_time - start analysis at time in seconds (default: 0)",
+                    "duration": "Analyze duration in seconds (0.1-300, default: entire file)",
+                    "normalize": "Normalize to frequency in Hz (0.1-50000, optional)",
+                    "points_per_octave": "Summarize to log frequency buckets (1-100, optional)",
+                    "psychoacoustic_smoothing": "Apply psychoacoustic smoothing (0.1-5.0, optional)"
+                },
+                "examples": {
+                    "basic": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc12345&recording_id2=def67890'",
+                    "with_options": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc12345&recording_id2=def67890&points_per_octave=16&psychoacoustic_smoothing=1.0'",
+                    "time_segment": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc12345&recording_id2=def67890&start_at=2.0&duration=5.0'"
+                },
+                "use_cases": [
+                    "Compare noise playback vs recording to analyze room response",
+                    "Compare input signal vs processed output to measure system effects",
+                    "Analyze before/after recordings to quantify acoustic treatment effectiveness",
+                    "Measure loudspeaker performance differences between positions or settings"
+                ]
             },
             "playback_control": {
                 "stop": "curl -X POST http://localhost:10315/audio/noise/stop",
@@ -1570,6 +1763,63 @@ def root():
                         "normalization": {"applied": False}
                     },
                     "timestamp": "2025-08-15T12:25:00.123456"
+                }
+            },
+            "fft_difference": {
+                "description": "FFT difference analysis results with statistics and comparison data",
+                "example": {
+                    "status": "success",
+                    "recording_info": {
+                        "recording_id1": "abc12345",
+                        "filename1": "recording_abc12345.wav",
+                        "timestamp1": "2025-08-15T12:20:00.123456",
+                        "recording_id2": "def67890",
+                        "filename2": "recording_def67890.wav",
+                        "timestamp2": "2025-08-15T12:25:00.123456"
+                    },
+                    "analysis_info": {
+                        "analyzed_duration": 10.0,
+                        "analyzed_samples": 480000,
+                        "start_time": 0.0,
+                        "analysis_parameters": {
+                            "window_type": "hann",
+                            "fft_size": 32768,
+                            "points_per_octave": 16,
+                            "psychoacoustic_smoothing": null,
+                            "normalize": null
+                        }
+                    },
+                    "fft_difference": {
+                        "title": "Difference: abc12345 vs def67890",
+                        "description": "FFT difference analysis between recordings",
+                        "diff_type": "magnitude_difference_db",
+                        "sample_rate": 48000,
+                        "frequencies": [20.0, 23.8, 28.3, 33.7, "..."],
+                        "magnitudes": [-2.3, -1.8, -1.2, -0.8, "..."],
+                        "phases": [0.0, 0.0, 0.0, 0.0, "..."],
+                        "peak_frequency": 2500.0,
+                        "peak_magnitude": -8.7,
+                        "statistics": {
+                            "rms_difference_db": 3.2,
+                            "max_difference_db": 8.7,
+                            "mean_difference_db": -1.1,
+                            "frequency_range": [20.0, 20000.0],
+                            "n_points": 161
+                        },
+                        "source_info": {
+                            "result1_title": "Result 1",
+                            "result2_title": "Result 2",
+                            "result1_peak_freq": 1000.0,
+                            "result2_peak_freq": 1200.0
+                        },
+                        "spectral_density": {
+                            "type": "FFT Magnitude Difference",
+                            "units": "dB difference",
+                            "description": "Magnitude difference between two FFT results",
+                            "computation": "result1_db - result2_db"
+                        }
+                    },
+                    "analysis_timestamp": "2025-08-15T12:30:00.123456"
                 }
             },
             "eq_optimization": {

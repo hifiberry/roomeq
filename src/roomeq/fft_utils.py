@@ -501,24 +501,46 @@ def fft_diff(fft_result1: Dict, fft_result2: Dict,
             raise ValueError("Both inputs must be FFT analysis dictionaries")
         
         # Extract frequency and magnitude data
-        if 'frequencies' in fft_result1 and 'magnitudes' in fft_result1:
-            # Use full resolution data if available
+        # Extract frequency and magnitude data from FFT results
+        # First, try to get data from fft_analysis section
+        if ('fft_analysis' in fft_result1 and 'frequencies' in fft_result1['fft_analysis'] 
+            and 'magnitudes' in fft_result1['fft_analysis']):
+            # Use full resolution data from fft_analysis
+            freqs1 = np.array(fft_result1['fft_analysis']['frequencies'])
+            mags1 = np.array(fft_result1['fft_analysis']['magnitudes'])
+        elif ('fft_analysis' in fft_result1 and 'log_frequency_summary' in fft_result1['fft_analysis']):
+            # Use log frequency summary from fft_analysis
+            log_data1 = fft_result1['fft_analysis']['log_frequency_summary']
+            freqs1 = np.array(log_data1['frequencies'])
+            mags1 = np.array(log_data1['magnitudes'])
+        elif 'frequencies' in fft_result1 and 'magnitudes' in fft_result1:
+            # Legacy: try root level (backwards compatibility)
             freqs1 = np.array(fft_result1['frequencies'])
             mags1 = np.array(fft_result1['magnitudes'])
         elif 'log_frequency_summary' in fft_result1:
-            # Use log frequency summary if full resolution not available
+            # Legacy: try root level log frequency summary
             log_data1 = fft_result1['log_frequency_summary']
             freqs1 = np.array(log_data1['frequencies'])
             mags1 = np.array(log_data1['magnitudes'])
         else:
             raise ValueError("First FFT result missing frequency/magnitude data")
         
-        if 'frequencies' in fft_result2 and 'magnitudes' in fft_result2:
-            # Use full resolution data if available
+        if ('fft_analysis' in fft_result2 and 'frequencies' in fft_result2['fft_analysis'] 
+            and 'magnitudes' in fft_result2['fft_analysis']):
+            # Use full resolution data from fft_analysis
+            freqs2 = np.array(fft_result2['fft_analysis']['frequencies'])
+            mags2 = np.array(fft_result2['fft_analysis']['magnitudes'])
+        elif ('fft_analysis' in fft_result2 and 'log_frequency_summary' in fft_result2['fft_analysis']):
+            # Use log frequency summary from fft_analysis
+            log_data2 = fft_result2['fft_analysis']['log_frequency_summary']
+            freqs2 = np.array(log_data2['frequencies'])
+            mags2 = np.array(log_data2['magnitudes'])
+        elif 'frequencies' in fft_result2 and 'magnitudes' in fft_result2:
+            # Legacy: try root level (backwards compatibility)
             freqs2 = np.array(fft_result2['frequencies'])
             mags2 = np.array(fft_result2['magnitudes'])
         elif 'log_frequency_summary' in fft_result2:
-            # Use log frequency summary if full resolution not available
+            # Legacy: try root level log frequency summary
             log_data2 = fft_result2['log_frequency_summary']
             freqs2 = np.array(log_data2['frequencies'])
             mags2 = np.array(log_data2['magnitudes'])
