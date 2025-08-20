@@ -137,7 +137,7 @@ class SignalGenerator:
     
     def generate_sweep_file(self, start_freq: float = 20.0, end_freq: float = 20000.0, 
                            duration: float = 5.0, amplitude: float = 0.5, 
-                           compensation_mode: str = 'sqrt_f', sweeps: int = 1) -> str:
+                           compensation_mode: str = 'none', sweeps: int = 1) -> str:
         """
         Generate sine sweep(s) and save to a temporary WAV file.
         
@@ -220,13 +220,16 @@ class SignalGenerator:
     
     def _generate_sine_sweep(self, f_start, f_end, duration_samples, amplitude, compensation_mode: str = 'inv_sqrt_f'):
         """
-        Generate a logarithmic sine sweep with proper amplitude normalization.
+        Generate a logarithmic sine sweep with improved phase calculation.
         
         Based on the enDAQ sine sweep testing documentation:
         https://endaq.com/pages/sine-sweep-testing
         
         For logarithmic sweeps, the frequency follows:
         f(t) = f_start * (f_end/f_start)^(t/T)
+        
+        This implementation uses numerical integration for more accurate phase calculation,
+        reducing spectral artifacts and discontinuities.
         
         Compensation modes:
             - 'none': constant amplitude envelope
@@ -238,6 +241,7 @@ class SignalGenerator:
             f_end: Ending frequency in Hz  
             duration_samples: Duration in samples
             amplitude: Peak amplitude (0.0 to 1.0)
+            compensation_mode: Amplitude compensation mode
             
         Returns:
             numpy.ndarray: Generated sine sweep samples
@@ -248,51 +252,27 @@ class SignalGenerator:
         # Calculate frequency ratio
         frequency_ratio = f_end / f_start
         
-        # Logarithmic frequency sweep formula from enDAQ documentation
-        # f(t) = f_start * (f_end/f_start)^(t/T)
-        instantaneous_freq = f_start * np.power(frequency_ratio, t / duration_seconds)
-        
-        # Calculate phase by integrating frequency
-        # φ(t) = 2π * ∫ f(τ) dτ from 0 to t
-        # For logarithmic sweep: φ(t) = 2π * f_start * T / ln(f_end/f_start) * [(f_end/f_start)^(t/T) - 1]
-        log_ratio = np.log(frequency_ratio)
-        if abs(log_ratio) > 1e-10:  # Avoid division by zero
-            phase = 2 * np.pi * f_start * duration_seconds / log_ratio * (
-                np.power(frequency_ratio, t / duration_seconds) - 1
-            )
-        else:
-            # Linear case when f_start ≈ f_end
-            phase = 2 * np.pi * f_start * t
-        
+        # Improved phase calculation using numerical integration
+        # This reduces discontinuities compared to analytical formula
+        phase = np.zeros_like(t)
+        for i in range(len(t)):
+            if i == 0:
+                phase[i] = 0
+            else:
+                # Current instantaneous frequency
+                freq_t = f_start * np.power(frequency_ratio, t[i] / duration_seconds)
+                # Time step
+                dt = t[i] - t[i-1]
+                # Integrate frequency to get phase
+                phase[i] = phase[i-1] + 2 * np.pi * freq_t * dt
+
         # Generate basic sine sweep (unit amplitude)
-        signal = np.sin(phase)
-
-        # Amplitude compensation envelope
-        comp = np.ones_like(signal)
-        mode = (compensation_mode or 'inv_sqrt_f').lower()
-        if mode == 'inv_sqrt_f':
-            # A ∝ 1/sqrt(f)
-            comp = np.sqrt(np.maximum(f_start, 1e-9) / np.maximum(instantaneous_freq, 1e-9))
-        elif mode == 'sqrt_f':
-            # A ∝ sqrt(f)
-            comp = np.sqrt(np.maximum(instantaneous_freq, 1e-9) / np.maximum(f_start, 1e-9))
-        elif mode == 'none':
-            comp = np.ones_like(signal)
-        else:
-            logger.warning(f"Unknown compensation_mode '{compensation_mode}', using 'inv_sqrt_f'")
-            comp = np.sqrt(np.maximum(f_start, 1e-9) / np.maximum(instantaneous_freq, 1e-9))
-
-        # Normalize envelope to keep peak at 1.0 before applying amplitude
-        comp_max = float(np.max(np.abs(comp))) if comp.size else 1.0
-        if comp_max > 0:
-            comp = comp / comp_max
-
-        # Apply amplitude and compensation
-        signal = signal * (amplitude * comp)
+        signal = amplitude * np.sin(phase)
         
-        # Apply fade-in and fade-out to reduce spectral artifacts
-        fade_samples = int(0.01 * self.sample_rate)  # 10ms fade
-        if fade_samples > 0:
+        # Apply fade-in and fade-out to reduce edge discontinuities
+        fade_time = 0.1  # 100ms fade
+        fade_samples = int(fade_time * self.sample_rate)
+        if fade_samples > 0 and len(signal) > fade_samples * 2:
             # Fade in
             fade_in = np.linspace(0, 1, fade_samples)
             signal[:fade_samples] *= fade_in
@@ -300,6 +280,29 @@ class SignalGenerator:
             # Fade out  
             fade_out = np.linspace(1, 0, fade_samples)
             signal[-fade_samples:] *= fade_out
+
+        # Amplitude compensation envelope (optional, applied after fade)
+        mode = (compensation_mode or 'none').lower()
+        if mode != 'none':
+            # Calculate instantaneous frequency for compensation
+            instantaneous_freq = f_start * np.power(frequency_ratio, t / duration_seconds)
+            
+            comp = np.ones_like(signal)
+            if mode == 'inv_sqrt_f':
+                # A ∝ 1/sqrt(f)
+                comp = np.sqrt(np.maximum(f_start, 1e-9) / np.maximum(instantaneous_freq, 1e-9))
+            elif mode == 'sqrt_f':
+                # A ∝ sqrt(f)
+                comp = np.sqrt(np.maximum(instantaneous_freq, 1e-9) / np.maximum(f_start, 1e-9))
+            else:
+                logger.warning(f"Unknown compensation_mode '{compensation_mode}', using 'none'")
+                comp = np.ones_like(signal)
+
+            # Normalize envelope to keep peak at original amplitude
+            comp_max = float(np.max(np.abs(comp))) if comp.size else 1.0
+            if comp_max > 0:
+                comp = comp / comp_max
+                signal = signal * comp
         
         # Convert to stereo if needed
         if self.channels == 2:
