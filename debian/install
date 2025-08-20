@@ -5,3 +5,4 @@ src/rust/target/release/roomeq-optimizer usr/bin/
 src/rust/README.md usr/share/doc/roomeq/rust/
 src/rust/example_job.json usr/share/doc/roomeq/rust/examples/
 src/rust/demo_rust_optimizer.py usr/share/doc/roomeq/rust/examples/
+debian/roomeq/usr/share/hifiberry/signals/* usr/share/hifiberry/signals/

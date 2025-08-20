@@ -1076,6 +1076,148 @@ def cleanup_status_endpoint():
 
 
 # =============================================================================
+# Pre-created Signals API - List and access bundled signal files
+# =============================================================================
+
+@app.route("/audio/signals/list", methods=["GET"])
+def list_signals():
+    """List available pre-created signal files."""
+    try:
+        # Standard location for pre-created signals
+        signals_dir = "/usr/share/hifiberry/signals"
+        
+        # Fallback to development location if standard location doesn't exist
+        if not os.path.exists(signals_dir):
+            # Try relative to the project root for development
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+            dev_signals_dir = os.path.join(project_root, "debian/roomeq/usr/share/hifiberry/signals")
+            if os.path.exists(dev_signals_dir):
+                signals_dir = dev_signals_dir
+            else:
+                return jsonify({
+                    "signals": [],
+                    "signals_directory": signals_dir,
+                    "available": False,
+                    "message": "No pre-created signals directory found"
+                })
+        
+        signals = []
+        
+        if os.path.exists(signals_dir):
+            for filename in os.listdir(signals_dir):
+                if filename.lower().endswith('.wav'):
+                    filepath = os.path.join(signals_dir, filename)
+                    
+                    # Get file info
+                    try:
+                        import wave
+                        with wave.open(filepath, 'rb') as wf:
+                            duration = wf.getnframes() / wf.getframerate()
+                            channels = wf.getnchannels()
+                            sample_rate = wf.getframerate()
+                            file_size = os.path.getsize(filepath)
+                    except Exception:
+                        # If we can't read WAV info, provide basic file info
+                        duration = None
+                        channels = None
+                        sample_rate = None
+                        file_size = os.path.getsize(filepath)
+                    
+                    # Parse signal info from filename
+                    signal_info = _parse_signal_filename(filename)
+                    
+                    signal_entry = {
+                        "filename": filename,
+                        "filepath": filepath,
+                        "file_size": file_size,
+                        "duration": duration,
+                        "channels": channels,
+                        "sample_rate": sample_rate,
+                        **signal_info
+                    }
+                    
+                    signals.append(signal_entry)
+        
+        # Sort by filename for consistent ordering
+        signals.sort(key=lambda x: x['filename'])
+        
+        logger.info(f"Listed {len(signals)} pre-created signals from {signals_dir}")
+        
+        return jsonify({
+            "signals": signals,
+            "count": len(signals),
+            "signals_directory": signals_dir,
+            "available": True,
+            "message": f"Found {len(signals)} pre-created signal(s)"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error listing signals: {e}")
+        return jsonify({
+            "signals": [],
+            "count": 0,
+            "signals_directory": signals_dir if 'signals_dir' in locals() else "unknown",
+            "available": False,
+            "error": str(e),
+            "message": "Failed to list signals"
+        }), 500
+
+
+def _parse_signal_filename(filename):
+    """Parse signal information from filename."""
+    # Remove extension
+    name = filename.lower().replace('.wav', '')
+    
+    signal_info = {
+        "signal_type": "unknown",
+        "description": filename
+    }
+    
+    # Parse sweep signals: sweep_10hz_22000hz_10s
+    if name.startswith('sweep_'):
+        parts = name.split('_')
+        if len(parts) >= 4:
+            try:
+                start_freq_str = parts[1].replace('hz', '')
+                end_freq_str = parts[2].replace('hz', '')
+                duration_str = parts[3].replace('s', '')
+                
+                start_freq = float(start_freq_str)
+                end_freq = float(end_freq_str)
+                duration = float(duration_str)
+                
+                signal_info.update({
+                    "signal_type": "sine_sweep",
+                    "start_freq": start_freq,
+                    "end_freq": end_freq,
+                    "sweep_duration": duration,
+                    "description": f"Sine sweep {start_freq} Hz → {end_freq} Hz, {duration}s"
+                })
+            except ValueError:
+                pass
+    
+    # Parse noise signals: noise_white_5s, noise_pink_10s  
+    elif name.startswith('noise_'):
+        parts = name.split('_')
+        if len(parts) >= 3:
+            try:
+                noise_type = parts[1]  # white, pink, etc.
+                duration_str = parts[2].replace('s', '')
+                duration = float(duration_str)
+                
+                signal_info.update({
+                    "signal_type": "noise",
+                    "noise_type": noise_type,
+                    "duration": duration,
+                    "description": f"{noise_type.title()} noise, {duration}s"
+                })
+            except ValueError:
+                pass
+    
+    return signal_info
+
+
+# =============================================================================
 # Generator API - Generate audio files without immediate playback
 # =============================================================================
 
@@ -1208,12 +1350,29 @@ def play_file():
         
         # If only a filename is provided, look in common locations
         if not os.path.isabs(filepath):
-            # Try /tmp first (where generated files are stored)
-            tmp_path = os.path.join('/tmp', filepath)
-            if os.path.exists(tmp_path):
-                filepath = tmp_path
+            # First try pre-created signals directory
+            signals_dir = "/usr/share/hifiberry/signals"
+            
+            # Fallback to development location if standard location doesn't exist
+            if not os.path.exists(signals_dir):
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+                dev_signals_dir = os.path.join(project_root, "debian/roomeq/usr/share/hifiberry/signals")
+                if os.path.exists(dev_signals_dir):
+                    signals_dir = dev_signals_dir
+            
+            # Check pre-created signals directory
+            signals_path = os.path.join(signals_dir, filepath)
+            if os.path.exists(signals_path):
+                filepath = signals_path
+                logger.info(f"Using pre-created signal: {filepath}")
             else:
-                abort(404, f"Audio file not found: {filepath}")
+                # Try /tmp (where generated files are stored)
+                tmp_path = os.path.join('/tmp', filepath)
+                if os.path.exists(tmp_path):
+                    filepath = tmp_path
+                    logger.info(f"Using generated signal: {filepath}")
+                else:
+                    abort(404, f"Audio file not found. Searched in: {signals_dir}, /tmp")
         
         if not os.path.exists(filepath):
             abort(404, f"Audio file not found: {filepath}")
@@ -1863,11 +2022,17 @@ def root():
                 "/spl/measure": "Measure sound pressure level and RMS"
             },
             "signal_generation": {
-                "/audio/noise/start": "Start white noise playback with file tracking",
-                "/audio/noise/keep-playing": "Extend current noise playback",
-                "/audio/noise/stop": "Stop current playback immediately",
-                "/audio/noise/status": "Get current playback status including filename",
-                "/audio/sweep/start": "Start sine sweep(s) with multiple repeat support"
+                "/audio/generate/sweep": "Generate sine sweep file",
+                "/audio/generate/noise": "Generate white noise file",
+                "/audio/play/file": "Play audio file with repeats support",
+                "/audio/play/stop": "Stop audio playback",
+                "/audio/play/status": "Get playback status",
+                "/audio/signals/list": "List pre-created signals",
+                "/audio/noise/start": "Start white noise playback (deprecated)",
+                "/audio/noise/keep-playing": "Extend current noise playback (deprecated)",
+                "/audio/noise/stop": "Stop current playback (deprecated)",
+                "/audio/noise/status": "Get current playback status (deprecated)",
+                "/audio/sweep/start": "Start sine sweep(s) (deprecated)"
             },
             "recording": {
                 "/audio/record/start": "Start recording audio to WAV file in background",

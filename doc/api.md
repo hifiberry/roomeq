@@ -22,6 +22,8 @@
   - [Signal Generation](#signal-generation)
     - [POST `/audio/generate/sweep`](#post-audiogeneratesweep)
     - [POST `/audio/generate/noise`](#post-audiogeneratenoise)
+  - [Pre-created Signals](#pre-created-signals)
+    - [GET `/audio/signals/list`](#get-audiosignalslist)
   - [Audio Playback](#audio-playback)
     - [POST `/audio/play/file`](#post-audioplayfile)
     - [POST `/audio/play/stop`](#post-audioplaystop)
@@ -400,22 +402,87 @@ curl -X POST "http://localhost:10315/audio/generate/noise?duration=1&amplitude=0
 }
 ```
 
+### Pre-created Signals
+
+#### GET `/audio/signals/list`
+List available pre-created signal files bundled with the system. These are high-quality reference signals stored in `/usr/share/hifiberry/signals/`.
+
+**Example Request:**
+```bash
+curl -X GET http://localhost:10315/audio/signals/list
+```
+
+**Response:**
+```json
+{
+  "signals": [
+    {
+      "filename": "sweep_10hz_22000hz_10s.wav",
+      "filepath": "/usr/share/hifiberry/signals/sweep_10hz_22000hz_10s.wav",
+      "file_size": 1920044,
+      "duration": 10.0,
+      "channels": 2,
+      "sample_rate": 48000,
+      "signal_type": "sine_sweep",
+      "start_freq": 10.0,
+      "end_freq": 22000.0,
+      "sweep_duration": 10.0,
+      "description": "Sine sweep 10.0 Hz → 22000.0 Hz, 10.0s"
+    }
+  ],
+  "count": 1,
+  "signals_directory": "/usr/share/hifiberry/signals",
+  "available": true,
+  "message": "Found 1 pre-created signal(s)"
+}
+```
+
+**Response Fields:**
+- `signals`: Array of available signal files with metadata
+- `count`: Number of available signals
+- `signals_directory`: Path to the signals directory
+- `available`: Whether the signals directory is accessible
+
+**Signal Metadata:**
+Each signal includes:
+- `filename`: Name of the signal file
+- `filepath`: Full path to the signal file
+- `file_size`: File size in bytes
+- `duration`: Signal duration in seconds
+- `channels`: Number of audio channels
+- `sample_rate`: Sample rate in Hz
+- `signal_type`: Type of signal ("sine_sweep", "noise", "unknown")
+- Additional fields based on signal type (frequencies, noise type, etc.)
+- `description`: Human-readable description
+
+**Use Cases:**
+- **Reference Signals**: High-quality, consistent test signals for measurements
+- **Standardized Testing**: Same signals across different installations
+- **Offline Usage**: No need to generate signals when network/computation is limited
+- **Quick Access**: Instant availability without generation time
+
 ### Audio Playback
 
 #### POST `/audio/play/file`
-Play an audio file through the specified output device. This endpoint can play generated files or any WAV file with optional repeat functionality.
+Play an audio file through the specified output device. This endpoint can play generated files, pre-created signals, or any WAV file with optional repeat functionality.
 
 **Query Parameters:**
 - `filepath` (optional): Full path to the audio file to play
-- `filename` (optional): Filename to play (searches in `/tmp` for generated files)
+- `filename` (optional): Filename to play (searches pre-created signals, then `/tmp` for generated files)
 - `device` (optional): Output device (e.g., "hw:0,0"). Uses default if not specified
 - `repeats` (optional): Number of times to repeat the file (1-100, default: 1)
 
-**Note:** Must specify either `filepath` OR `filename`. If only `filename` is provided, the system looks for the file in `/tmp` where generated files are stored.
+**Note:** Must specify either `filepath` OR `filename`. If only `filename` is provided, the system first looks for pre-created signals in `/usr/share/hifiberry/signals/`, then in `/tmp` where generated files are stored.
 
 **Example Requests:**
 ```bash
-# Play a generated sweep file by filename (single play)
+# Play a pre-created signal by filename
+curl -X POST "http://localhost:10315/audio/play/file?filename=sweep_10hz_22000hz_10s.wav"
+
+# Play a pre-created signal 5 times for acoustic averaging
+curl -X POST "http://localhost:10315/audio/play/file?filename=sweep_10hz_22000hz_10s.wav&repeats=5"
+
+# Play a generated sweep file by filename (searches /tmp after signals dir)
 curl -X POST "http://localhost:10315/audio/play/file?filename=roomeq_sweep_abc123def456.wav"
 
 # Play a generated noise file 3 times for acoustic averaging
@@ -423,9 +490,6 @@ curl -X POST "http://localhost:10315/audio/play/file?filename=roomeq_noise_xyz78
 
 # Play external file with specific device and 5 repeats
 curl -X POST "http://localhost:10315/audio/play/file?filepath=/home/user/test_signal.wav&device=hw:1,0&repeats=5"
-
-# Play sweep file for extended measurement (10 repeats)
-curl -X POST "http://localhost:10315/audio/play/file?filename=roomeq_sweep_abc123def456.wav&repeats=10&device=hw:0,0"
 ```
 
 **Response:**
