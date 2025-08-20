@@ -788,35 +788,39 @@ curl -X POST "http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc123
 {
   "status": "success",
   "comparison_info": {
-    "recording1": {
-      "id": "noise_rec_123",
-      "filename": "recording_noise_rec_123.wav",
-      "analyzed_duration": 10.0,
-      "start_time": 0.0
+    "file1": {
+      "source_type": "recording_id",
+      "identifier": "abc123",
+      "filename": "recording_abc123.wav",
+      "timestamp": "2025-08-20T12:30:00.123456"
     },
-    "recording2": {
-      "id": "room_rec_456", 
-      "filename": "recording_room_rec_456.wav",
-      "analyzed_duration": 10.0,
-      "start_time": 0.0
+    "file2": {
+      "source_type": "filename", 
+      "identifier": "noise_def456.wav",
+      "filename": "noise_def456.wav",
+      "timestamp": "2025-08-20T12:25:00.123456"
     },
     "analysis_parameters": {
-      "window": "hann",
+      "window_type": "hann",
+      "fft_size": 32768,
       "points_per_octave": 16,
-      "normalize": 1000.0
+      "psychoacoustic_smoothing": null,
+      "normalize": 1000.0,
+      "start_time": 0.0,
+      "analyzed_duration": 10.0,
+      "analyzed_samples": 480000
     }
   },
   "difference_analysis": {
     "frequencies": [20.0, 23.8, 28.3, 33.7, 40.1, 47.8, 56.8, 67.6, 80.4, 95.6, 113.8, 135.4, 161.0, 191.7, 228.2, 271.7, 323.6, 385.4, 459.2, 547.1, 651.9, 776.5, 925.0, 1102.3, 1313.4, 1565.0, 1864.7, 2222.4, 2649.0, 3158.1, 3765.6, 4490.2, 5353.8, 6380.5, 7599.3, 9056.8, 10799.8, 12876.4, 15343.5, 18282.5],
     "magnitude_differences": [-2.1, -1.8, -1.2, -0.8, -0.3, 0.2, 0.8, 1.5, 2.3, 2.8, 3.1, 2.9, 2.4, 1.8, 1.2, 0.5, -0.2, -0.9, -1.6, -2.2, -2.8, -3.1, -2.9, -2.4, -1.8, -1.1, -0.4, 0.3, 1.0, 1.7, 2.3, 2.8, 3.2, 3.4, 3.1, 2.7, 2.1, 1.4, 0.7, 0.1],
     "statistics": {
-      "mean_difference": 0.85,
-      "rms_difference": 2.12,
-      "max_positive_diff": 3.4,
-      "max_negative_diff": -3.1,
+      "mean_difference_db": 0.85,
+      "rms_difference_db": 2.12,
+      "max_difference_db": 3.4,
+      "min_difference_db": -3.1,
       "frequency_of_max_positive": 6380.5,
-      "frequency_of_max_negative": 2649.0,
-      "correlation_coefficient": 0.73
+      "frequency_of_max_negative": 2649.0
     },
     "frequency_bands_analysis": {
       "sub_bass": {"range": "20-60 Hz", "avg_difference": -1.2, "rms_difference": 1.4},
@@ -852,14 +856,16 @@ curl -X POST "http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc123
 - `individual_analyses`: Key metrics from each individual FFT analysis
 
 **Use Cases:**
-- **Room Response Analysis**: Compare noise playback with room recording to understand room effects
-- **Equipment Testing**: Compare direct recordings with processed audio to measure equipment impact
-- **Before/After Comparisons**: Analyze the effect of acoustic treatments or EQ adjustments
-- **Signal Quality Assessment**: Measure degradation or enhancement between source and recorded audio
+- **Room Response Analysis**: Compare generated noise files with room recordings to analyze acoustic properties and room effects
+- **Equipment Testing**: Compare input files with processed recordings to measure equipment impact and signal processing effects
+- **Before/After Comparisons**: Analyze the effect of acoustic treatments, EQ adjustments, or system changes
+- **Signal Quality Assessment**: Measure degradation or enhancement between reference signals and recorded measurements
+- **Noise Generation Validation**: Compare noise generation files with their recorded playback to verify system response
+- **Cross-Format Analysis**: Compare files from different sources (recordings, external files, generated signals) for comprehensive acoustic analysis
 
 **Error Responses:**
-- `400 Bad Request`: Invalid parameters, missing recordings, or incompatible audio formats
-- `404 Not Found`: One or both recordings not found
+- `400 Bad Request`: Invalid parameters, must specify exactly one input method per file, same file comparison, or incompatible audio formats
+- `404 Not Found`: One or both files not found (recording IDs not found, filenames not in recording directory, or file paths don't exist)
 - `500 Internal Server Error`: FFT analysis or comparison processing error
 
 ## EQ Optimization
@@ -1782,30 +1788,17 @@ curl -X POST "http://localhost:10315/audio/analyze/fft?filepath=/path/to/measure
 # Direct analysis of recording by ID (with log frequency summary and psychoacoustic smoothing)
 curl -X POST "http://localhost:10315/audio/analyze/fft-recording/abc12345?points_per_octave=16&normalize=1000&psychoacoustic_smoothing=1.5"
 
-# FFT difference analysis - compare noise playback with room recording
-curl -X POST "http://localhost:10315/audio/analyze/fft-diff" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "recording1_id": "noise_rec_123",
-    "recording2_id": "room_rec_456",
-    "points_per_octave": 16,
-    "normalize": 1000,
-    "window": "hann"
-  }'
+# FFT difference analysis - compare noise playback with room recording (by recording ID)
+curl -X POST "http://localhost:10315/audio/analyze/fft-diff?recording_id1=noise_rec_123&recording_id2=room_rec_456&points_per_octave=16&normalize=1000&window=hann"
 
-# FFT difference with custom time segments for each recording
-curl -X POST "http://localhost:10315/audio/analyze/fft-diff" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "recording1_id": "clean_signal_789",
-    "recording2_id": "processed_signal_012",
-    "points_per_octave": 12,
-    "start_time1": 2.0,
-    "duration1": 8.0,
-    "start_time2": 1.0,
-    "duration2": 10.0,
-    "normalize": 500
-  }'
+# FFT difference using filenames (great for comparing generated noise files with recordings)
+curl -X POST "http://localhost:10315/audio/analyze/fft-diff?filename1=noise_a1b2c3d4.wav&filename2=recording_def567.wav&points_per_octave=12"
+
+# FFT difference with external files
+curl -X POST "http://localhost:10315/audio/analyze/fft-diff?filepath1=/tmp/reference.wav&filepath2=/tmp/measurement.wav&window=hamming&normalize=500"
+
+# Mixed input types with time segments 
+curl -X POST "http://localhost:10315/audio/analyze/fft-diff?recording_id1=clean_signal_789&filename2=processed_output.wav&start_at=2.0&duration=8.0&points_per_octave=16"
 ```
 
 **Common points_per_octave values:**
@@ -1815,10 +1808,11 @@ curl -X POST "http://localhost:10315/audio/analyze/fft-diff" \
 - `48`: Very high resolution for research (481 points)
 
 **FFT Difference Analysis Use Cases:**
-- **Room Response**: Compare noise source with room recording to analyze acoustic properties
-- **Equipment Testing**: Measure processing effects by comparing input and output recordings
-- **Quality Assessment**: Analyze signal degradation or enhancement through system processing
-- **Before/After Studies**: Evaluate changes from acoustic treatments or EQ adjustments
+- **Room Response**: Compare generated noise files with room recordings to analyze acoustic properties and frequency response
+- **Equipment Testing**: Measure processing effects by comparing input files with output recordings using different input methods
+- **Quality Assessment**: Analyze signal degradation or enhancement through system processing with flexible file referencing
+- **Before/After Studies**: Evaluate changes from acoustic treatments or EQ adjustments using recordings or external reference files
+- **Noise Generation Validation**: Compare generated noise files (by filename) with their recorded playback to verify system accuracy
 ```
 
 ### Automated Measurement Sequence
