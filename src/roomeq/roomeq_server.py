@@ -684,28 +684,27 @@ def analyze_fft_diff():
                 "timestamp": recording_status1.get("timestamp")
             }
         elif filename1:
-            # Look for filename in recording directory (includes generated files)
-            # Extract just the filename part in case a full path was provided
-            search_filename = os.path.basename(filename1)
-            
-            from .recording import recording_manager
-            recording_files = recording_manager.get_completed_recordings()
-            matching_file = None
-            for rec_id, rec_data in recording_files.items():
-                if rec_data["filename"] == search_filename:
-                    matching_file = rec_data
-                    matching_file["recording_id"] = rec_id  # Add the recording ID
-                    break
-            if matching_file is None:
-                abort(404, f"File '{search_filename}' not found in recordings")
-            file1_path = matching_file["filepath"]
-            file1_info = {
-                "source_type": "filename",
-                "identifier": filename1,
-                "filename": search_filename,
-                "timestamp": matching_file.get("timestamp"),
-                "file_type": matching_file.get("file_type", "recording")
-            }
+            # Look for filename using comprehensive file resolution
+            file1_path, file1_info = _resolve_audio_file(filename1)
+            if file1_path is None:
+                # Build helpful error message showing where we looked
+                error_msg = f"File '{os.path.basename(filename1)}' not found. Searched in: "
+                search_locations = []
+                
+                # Check where we searched
+                signals_dir = "/usr/share/hifiberry/signals"
+                if not os.path.exists(signals_dir):
+                    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+                    dev_signals_dir = os.path.join(project_root, "debian/roomeq/usr/share/hifiberry/signals")
+                    if os.path.exists(dev_signals_dir):
+                        signals_dir = dev_signals_dir
+                
+                search_locations.append(f"pre-created signals ({signals_dir})")
+                search_locations.append("recording manager")
+                search_locations.append("/tmp directory")
+                
+                error_msg += ", ".join(search_locations)
+                abort(404, error_msg)
         else:  # filepath1
             if not os.path.exists(filepath1):
                 abort(404, f"File '{filepath1}' not found")
@@ -731,28 +730,27 @@ def analyze_fft_diff():
                 "timestamp": recording_status2.get("timestamp")
             }
         elif filename2:
-            # Look for filename in recording directory (includes generated files)
-            # Extract just the filename part in case a full path was provided
-            search_filename = os.path.basename(filename2)
-            
-            from .recording import recording_manager
-            recording_files = recording_manager.get_completed_recordings()
-            matching_file = None
-            for rec_id, rec_data in recording_files.items():
-                if rec_data["filename"] == search_filename:
-                    matching_file = rec_data
-                    matching_file["recording_id"] = rec_id  # Add the recording ID
-                    break
-            if matching_file is None:
-                abort(404, f"File '{search_filename}' not found in recordings")
-            file2_path = matching_file["filepath"]
-            file2_info = {
-                "source_type": "filename", 
-                "identifier": filename2,
-                "filename": search_filename,
-                "timestamp": matching_file.get("timestamp"),
-                "file_type": matching_file.get("file_type", "recording")
-            }
+            # Look for filename using comprehensive file resolution
+            file2_path, file2_info = _resolve_audio_file(filename2)
+            if file2_path is None:
+                # Build helpful error message showing where we looked
+                error_msg = f"File '{os.path.basename(filename2)}' not found. Searched in: "
+                search_locations = []
+                
+                # Check where we searched
+                signals_dir = "/usr/share/hifiberry/signals"
+                if not os.path.exists(signals_dir):
+                    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+                    dev_signals_dir = os.path.join(project_root, "debian/roomeq/usr/share/hifiberry/signals")
+                    if os.path.exists(dev_signals_dir):
+                        signals_dir = dev_signals_dir
+                
+                search_locations.append(f"pre-created signals ({signals_dir})")
+                search_locations.append("recording manager")
+                search_locations.append("/tmp directory")
+                
+                error_msg += ", ".join(search_locations)
+                abort(404, error_msg)
         else:  # filepath2
             if not os.path.exists(filepath2):
                 abort(404, f"File '{filepath2}' not found")
@@ -1217,6 +1215,75 @@ def _parse_signal_filename(filename):
     return signal_info
 
 
+def _resolve_audio_file(filename):
+    """
+    Resolve an audio filename to a full path by searching in multiple locations.
+    
+    Search order:
+    1. Pre-created signals directory (/usr/share/hifiberry/signals or dev location)
+    2. Recording manager (completed recordings and generated files)
+    3. /tmp directory (for generated files)
+    
+    Returns:
+        tuple: (file_path, file_info) where file_info contains metadata about the source
+    """
+    search_filename = os.path.basename(filename)
+    
+    # 1. Check pre-created signals directory first
+    signals_dir = "/usr/share/hifiberry/signals"
+    
+    # Fallback to development location if standard location doesn't exist
+    if not os.path.exists(signals_dir):
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        dev_signals_dir = os.path.join(project_root, "debian/roomeq/usr/share/hifiberry/signals")
+        if os.path.exists(dev_signals_dir):
+            signals_dir = dev_signals_dir
+    
+    if os.path.exists(signals_dir):
+        signals_path = os.path.join(signals_dir, search_filename)
+        if os.path.exists(signals_path):
+            logger.info(f"Found pre-created signal: {signals_path}")
+            return signals_path, {
+                "source_type": "pre_created_signal",
+                "identifier": filename,
+                "filename": search_filename,
+                "signals_directory": signals_dir,
+                "file_type": "pre_created_signal"
+            }
+    
+    # 2. Check recording manager (includes generated files and recordings)
+    try:
+        from .recording import recording_manager
+        recording_files = recording_manager.get_completed_recordings()
+        for rec_id, rec_data in recording_files.items():
+            if rec_data["filename"] == search_filename:
+                logger.info(f"Found in recording manager: {rec_data['filepath']}")
+                return rec_data["filepath"], {
+                    "source_type": "recording_manager",
+                    "identifier": filename,
+                    "filename": search_filename,
+                    "timestamp": rec_data.get("timestamp"),
+                    "file_type": rec_data.get("file_type", "recording"),
+                    "recording_id": rec_id
+                }
+    except Exception as e:
+        logger.warning(f"Error checking recording manager for {search_filename}: {e}")
+    
+    # 3. Check /tmp directory (fallback for generated files)
+    tmp_path = os.path.join('/tmp', search_filename)
+    if os.path.exists(tmp_path):
+        logger.info(f"Found in /tmp: {tmp_path}")
+        return tmp_path, {
+            "source_type": "temp_directory",
+            "identifier": filename,
+            "filename": search_filename,
+            "file_type": "generated"
+        }
+    
+    # File not found in any location
+    return None, None
+
+
 # =============================================================================
 # Generator API - Generate audio files without immediate playback
 # =============================================================================
@@ -1348,31 +1415,30 @@ def play_file():
         except ValueError:
             abort(400, "Invalid repeats: must be an integer")
         
-        # If only a filename is provided, look in common locations
+        # If only a filename is provided, use comprehensive file resolution
         if not os.path.isabs(filepath):
-            # First try pre-created signals directory
-            signals_dir = "/usr/share/hifiberry/signals"
+            resolved_path, file_info = _resolve_audio_file(filepath)
+            if resolved_path is None:
+                # Build helpful error message
+                error_msg = f"Audio file not found: {filepath}. Searched in: "
+                search_locations = []
+                
+                signals_dir = "/usr/share/hifiberry/signals"
+                if not os.path.exists(signals_dir):
+                    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+                    dev_signals_dir = os.path.join(project_root, "debian/roomeq/usr/share/hifiberry/signals")
+                    if os.path.exists(dev_signals_dir):
+                        signals_dir = dev_signals_dir
+                
+                search_locations.append(f"pre-created signals ({signals_dir})")
+                search_locations.append("recording manager")
+                search_locations.append("/tmp directory")
+                
+                error_msg += ", ".join(search_locations)
+                abort(404, error_msg)
             
-            # Fallback to development location if standard location doesn't exist
-            if not os.path.exists(signals_dir):
-                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-                dev_signals_dir = os.path.join(project_root, "debian/roomeq/usr/share/hifiberry/signals")
-                if os.path.exists(dev_signals_dir):
-                    signals_dir = dev_signals_dir
-            
-            # Check pre-created signals directory
-            signals_path = os.path.join(signals_dir, filepath)
-            if os.path.exists(signals_path):
-                filepath = signals_path
-                logger.info(f"Using pre-created signal: {filepath}")
-            else:
-                # Try /tmp (where generated files are stored)
-                tmp_path = os.path.join('/tmp', filepath)
-                if os.path.exists(tmp_path):
-                    filepath = tmp_path
-                    logger.info(f"Using generated signal: {filepath}")
-                else:
-                    abort(404, f"Audio file not found. Searched in: {signals_dir}, /tmp")
+            filepath = resolved_path
+            logger.info(f"Using {file_info['source_type']}: {filepath}")
         
         if not os.path.exists(filepath):
             abort(404, f"Audio file not found: {filepath}")
