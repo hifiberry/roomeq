@@ -125,19 +125,39 @@ impl FftAnalyzer {
             println!("Reference file: {} samples at {} Hz", self.fft_size, self.sample_rate);
         }
 
-        // Convert to f64 and perform FFT
-        let mut real: Vec<f64> = pcm_data.iter().map(|&x| x as f64).collect();
+        // Convert to f64 and apply Hann window
+        let mut real: Vec<f64> = Vec::with_capacity(self.fft_size);
+        let mut window_sum = 0.0;
+        
+        for i in 0..self.fft_size {
+            let pcm_val = if i < pcm_data.len() { pcm_data[i] as f64 } else { 0.0 };
+            // Apply Hann window
+            let window_val = 0.5 * (1.0 - (2.0 * PI * i as f64 / (self.fft_size - 1) as f64).cos());
+            let windowed_val = pcm_val * window_val;
+            real.push(windowed_val);
+            window_sum += window_val;
+        }
         let mut imag = vec![0.0; self.fft_size];
 
         self.fft_mono(&mut real, &mut imag)?;
 
-        // Calculate magnitude and phase, normalize
+        // Calculate magnitude and phase, normalize with window correction
         let mut ref_mag = Vec::with_capacity(self.fft_size / 2);
         let mut ref_pha = Vec::with_capacity(self.fft_size / 2);
         let mut max_mag = 0.0;
 
+        // Apply single-sided spectrum scaling and proper normalization
         for i in 0..self.fft_size / 2 {
-            let magnitude = (sqr(real[i]) + sqr(imag[i])).sqrt();
+            let mut magnitude = (sqr(real[i]) + sqr(imag[i])).sqrt();
+            
+            // Scale for single-sided spectrum (double all except DC)
+            if i > 0 {
+                magnitude *= 2.0;
+            }
+            
+            // Apply window correction (coherent gain)
+            magnitude /= window_sum;
+            
             let phase = if sqr(real[i]) > NOISE_FLOOR {
                 imag[i].atan2(real[i])
             } else {
@@ -189,11 +209,17 @@ impl FftAnalyzer {
                 file_path.as_ref().display(), pcm_data.len());
         }
 
-        // Pad or truncate to match reference size
-        let mut real: Vec<f64> = vec![0.0; self.fft_size];
-        let copy_len = pcm_data.len().min(self.fft_size);
-        for i in 0..copy_len {
-            real[i] = pcm_data[i] as f64;
+        // Pad or truncate to match reference size and apply Hann window
+        let mut real: Vec<f64> = Vec::with_capacity(self.fft_size);
+        let mut window_sum = 0.0;
+        
+        for i in 0..self.fft_size {
+            let pcm_val = if i < pcm_data.len() { pcm_data[i] as f64 } else { 0.0 };
+            // Apply Hann window
+            let window_val = 0.5 * (1.0 - (2.0 * PI * i as f64 / (self.fft_size - 1) as f64).cos());
+            let windowed_val = pcm_val * window_val;
+            real.push(windowed_val);
+            window_sum += window_val;
         }
         let mut imag = vec![0.0; self.fft_size];
 
@@ -204,7 +230,16 @@ impl FftAnalyzer {
         let mut pcm_pha = Vec::with_capacity(self.fft_size / 2);
 
         for i in 0..self.fft_size / 2 {
-            let magnitude = (sqr(real[i]) + sqr(imag[i])).sqrt();
+            let mut magnitude = (sqr(real[i]) + sqr(imag[i])).sqrt();
+            
+            // Scale for single-sided spectrum (double all except DC)
+            if i > 0 {
+                magnitude *= 2.0;
+            }
+            
+            // Apply window correction (coherent gain)
+            magnitude /= window_sum;
+            
             let phase = if sqr(real[i]) > NOISE_FLOOR {
                 imag[i].atan2(real[i])
             } else {
@@ -244,12 +279,11 @@ impl FftAnalyzer {
         let ref_pha = self.reference_pha.as_ref().unwrap();
 
         // Calculate response relative to reference
-        let bit_scale = 2.0_f64.powi(31);
         let mut response_mag = Vec::with_capacity(self.fft_size / 2);
         let mut response_pha = Vec::with_capacity(self.fft_size / 2);
 
         for i in 0..self.fft_size / 2 {
-            let mag_db = to_db(self.accumulated_mag[i] / bit_scale);
+            let mag_db = to_db(self.accumulated_mag[i]);
             response_mag.push(mag_db - ref_mag[i]);
             response_pha.push(self.accumulated_pha[i] - ref_pha[i]);
         }
@@ -380,8 +414,8 @@ impl FftAnalyzer {
             c1 = ((1.0 + c1) / 2.0).sqrt();
         }
 
-        // Normalize
-        let norm_factor = (n >> 1) as f64;
+        // Normalize by FFT size (not by N/2)
+        let norm_factor = n as f64;
         for i in 0..n {
             real[i] /= norm_factor;
             imag[i] /= norm_factor;
