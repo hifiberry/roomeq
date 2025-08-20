@@ -22,7 +22,7 @@ TARGET_CURVES = {
     
     "weighted_flat": {
         "name": "Weighted Flat Response",
-        "description": "Flat response with psychoacoustic weighting for optimal correction",
+        "description": "Flat response with frequency weighting for optimal correction",
         "expert": True,
         "curve": [
             {"frequency": 20.0, "target_db": 0.0, "weight": [1.0, 0.3]},
