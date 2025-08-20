@@ -16,7 +16,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 # Local imports
-from .fft import load_wav_file, compute_fft, analyze_wav_file, validate_fft_parameters
 from .fft_utils import fft_diff
 from .recording import (
     recording_manager, 
@@ -42,6 +41,27 @@ from .presets import list_target_curves, list_optimizer_presets
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Global configuration
+FFT_BACKEND = os.environ.get('ROOMEQ_FFT_BACKEND', 'rust').lower()  # 'python' or 'rust'
+
+# Import FFT backend based on configuration
+if FFT_BACKEND == 'rust':
+    try:
+        from .fft_rust import load_wav_file, compute_fft, analyze_wav_file, validate_fft_parameters, is_rust_backend_available
+        if not is_rust_backend_available():
+            logger.warning("Rust FFT backend not available, falling back to Python")
+            from .fft import load_wav_file, compute_fft, analyze_wav_file, validate_fft_parameters
+            FFT_BACKEND = 'python'
+        else:
+            logger.info("Using Rust FFT backend")
+    except ImportError as e:
+        logger.warning(f"Failed to import Rust FFT backend: {e}, falling back to Python")
+        from .fft import load_wav_file, compute_fft, analyze_wav_file, validate_fft_parameters
+        FFT_BACKEND = 'python'
+else:
+    from .fft import load_wav_file, compute_fft, analyze_wav_file, validate_fft_parameters
+    logger.info("Using Python FFT backend")
 
 # Global signal generator and playback state
 _signal_generator = None
@@ -169,6 +189,7 @@ def get_version():
             "flask_version": "2.x",
             "threading": "Multi-threaded request handling",
             "audio_backend": "ALSA with arecord fallback for compatibility",
+            "fft_backend": f"{FFT_BACKEND.title()} FFT implementation",
             "optimization_backend": "High-performance Rust optimizer with streaming output",
             "rust_optimizer": "v0.6.0 with brute-force search and intelligent frequency management"
         }
@@ -190,6 +211,28 @@ def debug_routes():
         "available_routes": sorted(routes, key=lambda x: x["path"]),
         "total_routes": len(routes)
     })
+
+
+@app.route("/config/fft-backend", methods=["GET"])
+def get_fft_backend():
+    """Get current FFT backend configuration."""
+    backend_info = {
+        "current_backend": FFT_BACKEND,
+        "available_backends": ["python", "rust"],
+        "configuration_source": "Environment variable ROOMEQ_FFT_BACKEND or default"
+    }
+    
+    # Check if Rust backend is actually available
+    if FFT_BACKEND == "rust":
+        try:
+            from .fft_rust import is_rust_backend_available
+            backend_info["rust_available"] = is_rust_backend_available()
+        except ImportError:
+            backend_info["rust_available"] = False
+    else:
+        backend_info["rust_available"] = None
+    
+    return jsonify(backend_info)
 
 
 @app.route("/microphones", methods=["GET"])
@@ -757,9 +800,12 @@ def analyze_fft_diff():
         logger.info(f"Computing FFT difference between files")
         
         # Compute difference using fft_utils
+        # If smoothing is requested (points_per_octave specified), prefer smoothed data
+        prefer_smoothed = points_per_octave is not None
         diff_result = fft_diff(result1, result2, 
                               title=f"Difference: {file1_info['filename']} vs {file2_info['filename']}",
-                              description=f"FFT difference analysis between {file1_info['filename']} and {file2_info['filename']}")
+                              description=f"FFT difference analysis between {file1_info['filename']} and {file2_info['filename']}",
+                              prefer_smoothed=prefer_smoothed)
         
         # Prepare comprehensive response
         response = {
@@ -1053,8 +1099,7 @@ def start_sine_sweep():
         start_freq_str = request.args.get("start_freq", "20")
         end_freq_str = request.args.get("end_freq", "20000")
         sweeps_str = request.args.get("sweeps", "1")
-        compensation_mode = request.args.get("compensation_mode", "sqrt_f").lower()
-        generator_mode = request.args.get("generator", "native").lower()  # 'native' or 'sine_sox'
+        compensation_mode = request.args.get("compensation_mode", "none").lower()
         device = request.args.get("device")
         
         duration = validate_float_param("duration", duration_str, 1.0, 30.0)
@@ -1075,10 +1120,6 @@ def start_sine_sweep():
         valid_modes = {"none", "inv_sqrt_f", "sqrt_f"}
         if compensation_mode not in valid_modes:
             abort(400, f"compensation_mode must be one of {sorted(valid_modes)}")
-        
-        # Validate generator mode
-        if generator_mode not in {"native", "sine_sox"}:
-            abort(400, "generator must be 'native' or 'sine_sox'")
 
         # Calculate total duration
         total_duration = duration * sweeps
@@ -1117,31 +1158,18 @@ def start_sine_sweep():
             'sweep_duration': duration,
             'total_duration': total_duration,
             'compensation_mode': compensation_mode,
-            'generator': generator_mode,
             'filename': os.path.basename(sweep_file)
         })
-        
-        # Start playing multiple sine sweeps with selected generator
-        started = False
-        if generator_mode == 'sine_sox':
-            # For SoX path, we don't apply compensation_mode; SoX generates the sweep audio
-            started = _signal_generator.play_sine_sweep_sox(
-                start_freq=start_freq,
-                end_freq=end_freq,
-                duration=duration,
-                amplitude=amplitude,
-                repeats=sweeps,
-                sox_delay=0.0
-            )
-        else:
-            started = _signal_generator.play_sine_sweep(
-                start_freq=start_freq,
-                end_freq=end_freq,
-                duration=duration,
-                amplitude=amplitude,
-                repeats=sweeps,
-                compensation_mode=compensation_mode
-            )
+
+        # Start playing multiple sine sweeps using native generator
+        started = _signal_generator.play_sine_sweep(
+            start_freq=start_freq,
+            end_freq=end_freq,
+            duration=duration,
+            amplitude=amplitude,
+            repeats=sweeps,
+            compensation_mode=compensation_mode
+        )
 
         # Ensure playback thread has started before returning
         if not started:
