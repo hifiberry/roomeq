@@ -746,30 +746,41 @@ Perform FFT analysis on a specific recording by ID.
 - `500 Internal Server Error`: Analysis processing error
 
 ### `/audio/analyze/fft-diff` [POST]
-Compare two audio recordings using FFT difference analysis. This endpoint calculates the spectral difference between two recordings, typically used to compare noise playback with actual room recordings.
+Compare two audio files using FFT difference analysis. This endpoint supports multiple input methods: recording IDs, filenames in the recording directory, or full file paths. This flexibility allows comparing noise generation files with recordings.
 
-**Parameters:**
-- `recording1_id` (string, required): ID of the first recording (typically the noise playback)
-- `recording2_id` (string, required): ID of the second recording (typically the room recording)
+**Parameters (Query Parameters):**
+
+**File Input Options (choose exactly one for each file):**
+- `recording_id1` (string): First recording ID from recording system
+- `filename1` (string): First filename in recording directory (alternative to recording_id1)  
+- `filepath1` (string): Full path to first audio file (alternative to recording_id1/filename1)
+- `recording_id2` (string): Second recording ID from recording system
+- `filename2` (string): Second filename in recording directory (alternative to recording_id2)
+- `filepath2` (string): Full path to second audio file (alternative to recording_id2/filename2)
+
+**Analysis Options:**
 - `window` (string, optional): Window function - "hann", "hamming", "blackman", or "none" (default: "hann")
 - `points_per_octave` (integer, optional): Logarithmic frequency resolution (1-100, default: 12)
-- `normalize` (float, optional): Frequency in Hz to normalize both recordings to 0 dB before comparison
-- `start_time1` (float, optional): Start analysis time for recording 1 in seconds (default: 0)
-- `duration1` (float, optional): Analysis duration for recording 1 in seconds (default: entire file)
-- `start_time2` (float, optional): Start analysis time for recording 2 in seconds (default: 0)
-- `duration2` (float, optional): Analysis duration for recording 2 in seconds (default: entire file)
+- `normalize` (float, optional): Frequency in Hz to normalize both files to 0 dB before comparison
+- `start_time` (float, optional): Start analysis time in seconds (default: 0)
+- `start_at` (float, optional): Alternative to start_time - start analysis time in seconds
+- `duration` (float, optional): Analysis duration in seconds (default: entire file)
+- `fft_size` (integer, optional): FFT size, power of 2 (64-65536, default: auto)
+- `psychoacoustic_smoothing` (float, optional): Apply psychoacoustic smoothing (0.1-5.0)
 
-**Example Request:**
+**Example Requests:**
 ```bash
-curl -X POST "http://localhost:10315/audio/analyze/fft-diff" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "recording1_id": "noise_rec_123",
-    "recording2_id": "room_rec_456",
-    "points_per_octave": 16,
-    "normalize": 1000,
-    "window": "hann"
-  }'
+# Compare two recordings by ID
+curl -X POST "http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc123&recording_id2=def456&points_per_octave=16"
+
+# Compare noise file with recording using filenames  
+curl -X POST "http://localhost:10315/audio/analyze/fft-diff?filename1=noise_a1b2c3.wav&filename2=recording_def456.wav&normalize=1000"
+
+# Compare external files using full paths
+curl -X POST "http://localhost:10315/audio/analyze/fft-diff?filepath1=/tmp/reference.wav&filepath2=/tmp/measurement.wav"
+
+# Mixed input types - recording ID with filename
+curl -X POST "http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc123&filename2=noise_signal.wav&window=hamming&points_per_octave=12"
 ```
 
 **Success Response (200):**

@@ -559,15 +559,26 @@ def analyze_fft_diff():
     """Perform FFT difference analysis between two recordings."""
     
     try:
-        # Get request parameters
+        # Get request parameters - support both recording IDs and filenames
         recording_id1 = request.args.get("recording_id1")
         recording_id2 = request.args.get("recording_id2")
+        filename1 = request.args.get("filename1") 
+        filename2 = request.args.get("filename2")
+        filepath1 = request.args.get("filepath1")
+        filepath2 = request.args.get("filepath2")
         
-        if not recording_id1 or not recording_id2:
-            abort(400, "Both recording_id1 and recording_id2 parameters are required")
+        # Check that we have exactly one way to specify each file
+        file1_methods = sum(bool(x) for x in [recording_id1, filename1, filepath1])
+        file2_methods = sum(bool(x) for x in [recording_id2, filename2, filepath2])
         
-        if recording_id1 == recording_id2:
-            abort(400, "recording_id1 and recording_id2 must be different")
+        if file1_methods != 1 or file2_methods != 1:
+            abort(400, "Must specify exactly one of recording_id1/filename1/filepath1 and recording_id2/filename2/filepath2")
+        
+        # Validate that we're not comparing the same file
+        if (recording_id1 and recording_id2 and recording_id1 == recording_id2) or \
+           (filename1 and filename2 and filename1 == filename2) or \
+           (filepath1 and filepath2 and filepath1 == filepath2):
+            abort(400, "Cannot compare the same file with itself")
         
         # Get optional FFT parameters
         window_type = request.args.get("window", "hann")
@@ -619,80 +630,171 @@ def analyze_fft_diff():
         if psychoacoustic_smoothing_str:
             psychoacoustic_smoothing = validate_float_param("psychoacoustic_smoothing", psychoacoustic_smoothing_str, 0.1, 5.0)
         
-        logger.info(f"FFT difference analysis requested between recordings {recording_id1} and {recording_id2}")
         
-        # Get recording statuses
-        recording_status1 = get_recording_status(recording_id1)
-        if recording_status1 is None:
-            abort(404, f"Recording {recording_id1} not found")
-        if recording_status1["status"] != "completed":
-            abort(400, f"Recording {recording_id1} is not completed")
+        logger.info(f"FFT difference analysis requested between files")
         
-        recording_status2 = get_recording_status(recording_id2)
-        if recording_status2 is None:
-            abort(404, f"Recording {recording_id2} not found")
-        if recording_status2["status"] != "completed":
-            abort(400, f"Recording {recording_id2} is not completed")
+        # Determine file paths and metadata for each file
+        file1_path = None
+        file1_info = {"source_type": None, "identifier": None, "filename": None}
+        file2_path = None 
+        file2_info = {"source_type": None, "identifier": None, "filename": None}
         
-        # Get filepaths and validate they exist
-        filepath1 = recording_status1["filepath"]
-        filepath2 = recording_status2["filepath"]
+        # Handle first file
+        if recording_id1:
+            recording_status1 = get_recording_status(recording_id1)
+            if recording_status1 is None:
+                abort(404, f"Recording {recording_id1} not found")
+            if recording_status1["status"] != "completed":
+                abort(400, f"Recording {recording_id1} is not completed")
+            file1_path = recording_status1["filepath"]
+            file1_info = {
+                "source_type": "recording_id",
+                "identifier": recording_id1,
+                "filename": recording_status1["filename"],
+                "timestamp": recording_status1.get("timestamp")
+            }
+        elif filename1:
+            # Look for filename in recording directory
+            from .recording import recording_manager
+            recording_files = recording_manager.list_completed_recordings()
+            matching_file = None
+            for rec_data in recording_files:
+                if rec_data["filename"] == filename1:
+                    matching_file = rec_data
+                    break
+            if matching_file is None:
+                abort(404, f"Recording file '{filename1}' not found")
+            file1_path = matching_file["filepath"]
+            file1_info = {
+                "source_type": "filename",
+                "identifier": filename1,
+                "filename": filename1,
+                "timestamp": matching_file.get("timestamp")
+            }
+        else:  # filepath1
+            if not os.path.exists(filepath1):
+                abort(404, f"File '{filepath1}' not found")
+            file1_path = filepath1
+            file1_info = {
+                "source_type": "filepath",
+                "identifier": filepath1,
+                "filename": os.path.basename(filepath1)
+            }
         
-        if not os.path.exists(filepath1):
-            abort(404, f"Recording file for {recording_id1} no longer exists")
-        if not os.path.exists(filepath2):
-            abort(404, f"Recording file for {recording_id2} no longer exists")
+        # Handle second file
+        if recording_id2:
+            recording_status2 = get_recording_status(recording_id2)
+            if recording_status2 is None:
+                abort(404, f"Recording {recording_id2} not found")
+            if recording_status2["status"] != "completed":
+                abort(400, f"Recording {recording_id2} is not completed")
+            file2_path = recording_status2["filepath"]
+            file2_info = {
+                "source_type": "recording_id",
+                "identifier": recording_id2,
+                "filename": recording_status2["filename"],
+                "timestamp": recording_status2.get("timestamp")
+            }
+        elif filename2:
+            # Look for filename in recording directory
+            from .recording import recording_manager
+            recording_files = recording_manager.list_completed_recordings()
+            matching_file = None
+            for rec_data in recording_files:
+                if rec_data["filename"] == filename2:
+                    matching_file = rec_data
+                    break
+            if matching_file is None:
+                abort(404, f"Recording file '{filename2}' not found")
+            file2_path = matching_file["filepath"]
+            file2_info = {
+                "source_type": "filename", 
+                "identifier": filename2,
+                "filename": filename2,
+                "timestamp": matching_file.get("timestamp")
+            }
+        else:  # filepath2
+            if not os.path.exists(filepath2):
+                abort(404, f"File '{filepath2}' not found")
+            file2_path = filepath2
+            file2_info = {
+                "source_type": "filepath",
+                "identifier": filepath2,
+                "filename": os.path.basename(filepath2)
+            }
+        
+        # Final validation that files exist
+        if not os.path.exists(file1_path):
+            abort(404, f"File 1 no longer exists: {file1_path}")
+        if not os.path.exists(file2_path):
+            abort(404, f"File 2 no longer exists: {file2_path}")
         
         # Validate parameters using FFT module
         validate_fft_parameters(fft_size, window_type)
         
-        logger.info(f"Analyzing recording 1: {filepath1}")
+        logger.info(f"Analyzing file 1 ({file1_info['source_type']}): {file1_path}")
         
-        # Analyze first recording
-        result1 = analyze_wav_file(filepath1, window_type, fft_size, start_time, duration, normalize, 
+        # Analyze first file
+        result1 = analyze_wav_file(file1_path, window_type, fft_size, start_time, duration, normalize, 
                                  points_per_octave, psychoacoustic_smoothing)
         
-        logger.info(f"Analyzing recording 2: {filepath2}")
+        logger.info(f"Analyzing file 2 ({file2_info['source_type']}): {file2_path}")
         
-        # Analyze second recording
-        result2 = analyze_wav_file(filepath2, window_type, fft_size, start_time, duration, normalize, 
+        # Analyze second file
+        result2 = analyze_wav_file(file2_path, window_type, fft_size, start_time, duration, normalize, 
                                  points_per_octave, psychoacoustic_smoothing)
         
-        logger.info(f"Computing FFT difference between recordings")
+        logger.info(f"Computing FFT difference between files")
         
         # Compute difference using fft_utils
         diff_result = fft_diff(result1, result2, 
-                              title=f"Difference: {recording_id1} vs {recording_id2}",
-                              description=f"FFT difference analysis between {recording_status1['filename']} and {recording_status2['filename']}")
+                              title=f"Difference: {file1_info['filename']} vs {file2_info['filename']}",
+                              description=f"FFT difference analysis between {file1_info['filename']} and {file2_info['filename']}")
         
         # Prepare comprehensive response
         response = {
             "status": "success",
-            "recording_info": {
-                "recording_id1": recording_id1,
-                "filename1": recording_status1["filename"],
-                "timestamp1": recording_status1["timestamp"],
-                "recording_id2": recording_id2,
-                "filename2": recording_status2["filename"],
-                "timestamp2": recording_status2["timestamp"]
-            },
-            "analysis_info": {
-                "analyzed_duration": result1["file_info"]["analyzed_duration"],
-                "analyzed_samples": result1["file_info"]["analyzed_samples"],
-                "start_time": start_time,
+            "comparison_info": {
+                "file1": {
+                    "source_type": file1_info["source_type"],
+                    "identifier": file1_info["identifier"],
+                    "filename": file1_info["filename"],
+                    "timestamp": file1_info.get("timestamp")
+                },
+                "file2": {
+                    "source_type": file2_info["source_type"],
+                    "identifier": file2_info["identifier"], 
+                    "filename": file2_info["filename"],
+                    "timestamp": file2_info.get("timestamp")
+                },
                 "analysis_parameters": {
                     "window_type": window_type,
                     "fft_size": result1["fft_analysis"]["fft_size"],
                     "points_per_octave": points_per_octave,
                     "psychoacoustic_smoothing": psychoacoustic_smoothing,
-                    "normalize": normalize
+                    "normalize": normalize,
+                    "start_time": start_time,
+                    "analyzed_duration": result1["file_info"]["analyzed_duration"],
+                    "analyzed_samples": result1["file_info"]["analyzed_samples"]
                 }
             },
-            "fft_difference": diff_result,
-            "analysis_timestamp": datetime.now().isoformat()
+            "difference_analysis": diff_result,
+            "individual_analyses": {
+                "file1_fft": {
+                    "peak_frequency": result1["fft_analysis"]["peak_frequency"],
+                    "peak_magnitude": result1["fft_analysis"]["peak_magnitude"],
+                    "spectral_centroid": result1["fft_analysis"]["spectral_centroid"]
+                },
+                "file2_fft": {
+                    "peak_frequency": result2["fft_analysis"]["peak_frequency"],
+                    "peak_magnitude": result2["fft_analysis"]["peak_magnitude"],
+                    "spectral_centroid": result2["fft_analysis"]["spectral_centroid"]
+                }
+            },
+            "timestamp": datetime.now().isoformat()
         }
         
-        logger.info(f"FFT difference analysis completed between {recording_id1} and {recording_id2}: "
+        logger.info(f"FFT difference analysis completed between {file1_info['filename']} and {file2_info['filename']}: "
                    f"RMS difference: {diff_result['statistics']['rms_difference_db']:.2f} dB, "
                    f"Max difference: {diff_result['statistics']['max_difference_db']:.2f} dB")
         
@@ -1577,12 +1679,16 @@ def root():
                 }
             },
             "fft_difference_analysis": {
-                "description": "Compare two recordings using FFT difference analysis to identify signal processing effects",
+                "description": "Compare two audio files using FFT difference analysis to identify signal processing effects. Supports multiple input methods: recording IDs, filenames, or file paths.",
                 "method": "POST",
                 "url": "/audio/analyze/fft-diff",
                 "parameters": {
-                    "recording_id1": "First recording ID (required)",
-                    "recording_id2": "Second recording ID (required, different from recording_id1)",
+                    "recording_id1": "First recording ID (mutually exclusive with filename1/filepath1)",
+                    "filename1": "First filename in recording directory (mutually exclusive with recording_id1/filepath1)",  
+                    "filepath1": "Full path to first file (mutually exclusive with recording_id1/filename1)",
+                    "recording_id2": "Second recording ID (mutually exclusive with filename2/filepath2)",
+                    "filename2": "Second filename in recording directory (mutually exclusive with recording_id2/filepath2)",
+                    "filepath2": "Full path to second file (mutually exclusive with recording_id2/filename2)",
                     "window": "Window function (hann|hamming|blackman|rectangular, default: hann)",
                     "fft_size": "FFT size, power of 2 (64-65536, default: auto)",
                     "start_time": "Start analysis at time in seconds (default: 0)",
@@ -1593,15 +1699,19 @@ def root():
                     "psychoacoustic_smoothing": "Apply psychoacoustic smoothing (0.1-5.0, optional)"
                 },
                 "examples": {
-                    "basic": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc12345&recording_id2=def67890'",
-                    "with_options": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc12345&recording_id2=def67890&points_per_octave=16&psychoacoustic_smoothing=1.0'",
+                    "recording_ids": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc12345&recording_id2=def67890'",
+                    "filenames": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?filename1=noise_abc123.wav&filename2=recording_def456.wav'", 
+                    "filepaths": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?filepath1=/tmp/file1.wav&filepath2=/tmp/file2.wav'",
+                    "mixed_types": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc12345&filename2=noise_def456.wav'",
+                    "with_options": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?filename1=noise_signal.wav&filename2=room_recording.wav&points_per_octave=16&psychoacoustic_smoothing=1.0'",
                     "time_segment": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc12345&recording_id2=def67890&start_at=2.0&duration=5.0'"
                 },
                 "use_cases": [
-                    "Compare noise playback vs recording to analyze room response",
+                    "Compare noise playback file vs room recording to analyze room response", 
                     "Compare input signal vs processed output to measure system effects",
                     "Analyze before/after recordings to quantify acoustic treatment effectiveness",
-                    "Measure loudspeaker performance differences between positions or settings"
+                    "Measure loudspeaker performance differences between positions or settings",
+                    "Compare generated noise files with recorded measurements"
                 ]
             },
             "playback_control": {
