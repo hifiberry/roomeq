@@ -654,7 +654,7 @@ def analyze_fft_diff():
                 "timestamp": recording_status1.get("timestamp")
             }
         elif filename1:
-            # Look for filename in recording directory
+            # Look for filename in recording directory (includes generated files)
             from .recording import recording_manager
             recording_files = recording_manager.get_completed_recordings()
             matching_file = None
@@ -664,13 +664,14 @@ def analyze_fft_diff():
                     matching_file["recording_id"] = rec_id  # Add the recording ID
                     break
             if matching_file is None:
-                abort(404, f"Recording file '{filename1}' not found")
+                abort(404, f"File '{filename1}' not found")
             file1_path = matching_file["filepath"]
             file1_info = {
                 "source_type": "filename",
                 "identifier": filename1,
                 "filename": filename1,
-                "timestamp": matching_file.get("timestamp")
+                "timestamp": matching_file.get("timestamp"),
+                "file_type": matching_file.get("file_type", "recording")
             }
         else:  # filepath1
             if not os.path.exists(filepath1):
@@ -697,7 +698,7 @@ def analyze_fft_diff():
                 "timestamp": recording_status2.get("timestamp")
             }
         elif filename2:
-            # Look for filename in recording directory
+            # Look for filename in recording directory (includes generated files)
             from .recording import recording_manager
             recording_files = recording_manager.get_completed_recordings()
             matching_file = None
@@ -707,13 +708,14 @@ def analyze_fft_diff():
                     matching_file["recording_id"] = rec_id  # Add the recording ID
                     break
             if matching_file is None:
-                abort(404, f"Recording file '{filename2}' not found")
+                abort(404, f"File '{filename2}' not found")
             file2_path = matching_file["filepath"]
             file2_info = {
                 "source_type": "filename", 
                 "identifier": filename2,
                 "filename": filename2,
-                "timestamp": matching_file.get("timestamp")
+                "timestamp": matching_file.get("timestamp"),
+                "file_type": matching_file.get("file_type", "recording")
             }
         else:  # filepath2
             if not os.path.exists(filepath2):

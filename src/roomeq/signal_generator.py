@@ -114,6 +114,24 @@ class SignalGenerator:
             wf.setframerate(self.sample_rate)
             wf.writeframes(noise_samples.tobytes())
         
+        # Register file for automatic cleanup
+        from .recording import recording_manager
+        file_id = f"noise_{uuid.uuid4().hex[:8]}"
+        recording_manager.register_generated_file(
+            file_id=file_id,
+            filepath=tmp_path,
+            file_type="noise",
+            metadata={
+                "duration": duration,
+                "signal_type": "noise",
+                "sample_rate": self.sample_rate,
+                "parameters": {
+                    "amplitude": amplitude,
+                    "channels": self.channels
+                }
+            }
+        )
+        
         logger.debug(f"Generated noise file: {tmp_path}")
         return tmp_path
     
@@ -173,6 +191,29 @@ class SignalGenerator:
             wf.setsampwidth(2)  # 16-bit
             wf.setframerate(self.sample_rate)
             wf.writeframes(sweep_samples.tobytes())
+        
+        # Register file for automatic cleanup
+        from .recording import recording_manager
+        file_id = f"sweep_{uuid.uuid4().hex[:8]}"
+        recording_manager.register_generated_file(
+            file_id=file_id,
+            filepath=tmp_path,
+            file_type="sweep",
+            metadata={
+                "duration": duration * sweeps,
+                "signal_type": "sine_sweep",
+                "sample_rate": self.sample_rate,
+                "parameters": {
+                    "start_freq": start_freq,
+                    "end_freq": end_freq,
+                    "duration": duration,
+                    "amplitude": amplitude,
+                    "compensation_mode": compensation_mode,
+                    "sweeps": sweeps,
+                    "channels": self.channels
+                }
+            }
+        )
         
         logger.debug(f"Generated sweep file: {tmp_path} ({sweeps} sweeps, {start_freq}-{end_freq} Hz)")
         return tmp_path

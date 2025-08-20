@@ -66,6 +66,26 @@ class RecordingManager:
     def start_recording(self, recording_id: str, device: str, duration: float, sample_rate: int = 48000):
         """Start a recording."""
         return start_recording(recording_id, device, duration, sample_rate)
+    
+    def register_generated_file(self, file_id: str, filepath: str, file_type: str = "generated", metadata: dict = None):
+        """Register a generated file (sweep/noise) for automatic cleanup."""
+        filename = os.path.basename(filepath)
+        
+        # Add to completed recordings with generated file metadata
+        self.completed_recordings[file_id] = {
+            "filename": filename,
+            "filepath": filepath, 
+            "timestamp": datetime.now(),
+            "duration": metadata.get("duration", 0) if metadata else 0,
+            "device": metadata.get("device", "generated") if metadata else "generated",
+            "sample_rate": metadata.get("sample_rate", 48000) if metadata else 48000,
+            "file_type": file_type,  # Mark as generated file
+            "signal_type": metadata.get("signal_type") if metadata else None,
+            "parameters": metadata.get("parameters", {}) if metadata else {}
+        }
+        
+        logger.info(f"Registered generated file for cleanup: {filename} (ID: {file_id})")
+        return file_id
 
 
 def recording_worker(recording_id: str, device: str, duration: float, sample_rate: int = 48000):
