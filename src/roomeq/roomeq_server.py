@@ -1183,7 +1183,6 @@ def start_sine_sweep():
             "amplitude": amplitude,
             "compensation_mode": compensation_mode,
             "device": device or "default",
-            "generator": generator_mode,
             "stop_time": stop_time.isoformat(),
             "filename": os.path.basename(sweep_file),
             "message": f"{sweeps} sine sweep(s) started: {start_freq} Hz → {end_freq} Hz, {duration}s each (total: {total_duration}s)"
@@ -1347,8 +1346,7 @@ def get_noise_status():
             "sweeps": _playback_state['sweeps'],
             "sweep_duration": _playback_state['sweep_duration'],
             "total_duration": _playback_state['total_duration'],
-            "compensation_mode": _playback_state.get('compensation_mode', 'sqrt_f'),
-            "generator": _playback_state.get('generator', 'native')
+            "compensation_mode": _playback_state.get('compensation_mode', 'sqrt_f')
         })
     
     return jsonify(status)
@@ -1625,7 +1623,6 @@ def root():
                     "duration": "Sweep duration in seconds (1.0-30.0, default: 5.0)",
                     "amplitude": "Amplitude level (0.0-1.0, default: 0.5)",
                     "compensation_mode": "Amplitude compensation ('none' | 'inv_sqrt_f' | 'sqrt_f', default: 'sqrt_f')",
-                    "generator": "Signal source ('native' | 'sine_sox', default: 'native')",
                     "device": "Output device (optional, auto-detects if not specified)"
                 },
                 "example": "curl -X POST 'http://localhost:10315/audio/sweep/start?start_freq=20&end_freq=20000&duration=10&amplitude=0.4&compensation_mode=none'",
@@ -1640,7 +1637,6 @@ def root():
                     "amplitude": 0.4,
                     "compensation_mode": "none",
                     "device": "default",
-                    "generator": "native",
                     "filename": "roomeq_sweep_abc123def456.wav",
                     "stop_time": "2025-08-20T12:05:00.000000",
                     "message": "1 sine sweep(s) started: 20 Hz → 20000 Hz, 10.0s each (total: 10.0s)"
@@ -1657,7 +1653,6 @@ def root():
                     "sweeps": "Number of consecutive sweeps (1-10, default: 1)",
                     "amplitude": "Amplitude level (0.0-1.0, default: 0.5)",
                     "compensation_mode": "Amplitude compensation ('none' | 'inv_sqrt_f' | 'sqrt_f', default: 'sqrt_f')",
-                    "generator": "Signal source ('native' | 'sine_sox', default: 'native')",
                     "device": "Output device (optional, auto-detects if not specified)"
                 },
                 "example": "curl -X POST 'http://localhost:10315/audio/sweep/start?start_freq=20&end_freq=20000&duration=8&sweeps=3&amplitude=0.3&compensation_mode=none'",
@@ -1672,7 +1667,6 @@ def root():
                     "amplitude": 0.3,
                     "compensation_mode": "none",
                     "device": "default",
-                    "generator": "native",
                     "filename": "roomeq_sweep_def789abc012.wav",
                     "stop_time": "2025-08-20T12:05:24.000000",
                     "message": "3 sine sweep(s) started: 20 Hz → 20000 Hz, 8.0s each (total: 24.0s)"
@@ -1688,7 +1682,6 @@ def root():
                     "duration": "Sweep duration in seconds (1.0-30.0, default: 5.0)",
                     "amplitude": "Amplitude level (0.0-1.0, default: 0.5)",
                     "sweeps": "Number of consecutive sweeps (1-10, default: 1)",
-                    "generator": "Must be 'sine_sox' to use SoX-based generator",
                     "device": "Output device (optional)"
                 },
                 "example": "curl -X POST 'http://localhost:10315/audio/sweep/start?start_freq=20&end_freq=20000&duration=8&sweeps=2&amplitude=0.3&generator=sine_sox'",
@@ -1703,7 +1696,6 @@ def root():
                     "amplitude": 0.3,
                     "compensation_mode": "sqrt_f",
                     "device": "default",
-                    "generator": "sine_sox",
                     "filename": "roomeq_sweep_fed654cba321.wav",
                     "stop_time": "2025-08-20T12:05:16.000000",
                     "message": "2 sine sweep(s) started: 20 Hz → 20000 Hz, 8.0s each (total: 16.0s)"
@@ -1887,7 +1879,6 @@ def root():
                     "sweep_duration": 8.0,
                     "total_duration": 24.0,
                     "compensation_mode": "sqrt_f",
-                    "generator": "native",
                     "filename": None
                 }
             },
