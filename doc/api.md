@@ -31,7 +31,6 @@
   - [FFT Analysis Technical Details](#fft-analysis-technical-details)
     - [Power Spectral Density (PSD) Calculation](#power-spectral-density-psd-calculation)
     - [Logarithmic Frequency Summarization](#logarithmic-frequency-summarization)
-    - [Psychoacoustic Smoothing](#psychoacoustic-smoothing)
   - [POST `/audio/analyze/fft-recording/<recording_id>`](#audioanalyzefft-recordingrecording_id-post)
   - [POST `/audio/analyze/fft-diff`](#audioanalyzefft-diff-post)
 - [EQ Optimization](#eq-optimization)
@@ -515,7 +514,6 @@ Perform FFT (Fast Fourier Transform) spectral analysis on a WAV file.
 - `duration` (float, optional): Duration to analyze in seconds (default: entire file from start_time)
 - `normalize` (float, optional): Frequency in Hz to normalize to 0 dB (all other levels adjusted relative to this frequency)
 - `points_per_octave` (integer, optional): Summarize FFT into logarithmic frequency buckets (1-100, enables log frequency summarization)
-- `psychoacoustic_smoothing` (float, optional): Apply psychoacoustic smoothing with critical band filtering (0.1-5.0, where 1.0 is normal strength)
 
 **Note:** Must specify either `filename` OR `filepath`, not both. Use either `start_time` OR `start_at`, not both (start_at takes precedence if both are provided).
 
@@ -671,36 +669,7 @@ When the `points_per_octave` parameter is specified, the FFT analysis includes a
 - `points_per_octave=16`: 161 points (higher resolution, good for detailed analysis)
 - `points_per_octave=24`: 241 points (very high resolution for research applications)
 
-#### Psychoacoustic Smoothing
 
-The FFT analysis supports optional psychoacoustic smoothing that applies frequency-dependent bandwidth filtering to match human auditory perception. This smoothing uses critical bands based on the Bark scale:
-
-**Key Features:**
-- **Variable Bandwidth**: Narrow smoothing at low frequencies (25-100 Hz bandwidth), progressively wider at high frequencies (up to 1000+ Hz bandwidth)
-- **Perceptual Accuracy**: Follows critical bands of human hearing for more natural frequency response presentation
-- **Noise Reduction**: Reduces measurement noise while preserving important spectral features
-- **Visual Enhancement**: Creates cleaner, more readable frequency response plots
-
-**Smoothing Factor Values:**
-- `0.5`: Light smoothing, preserves most detail
-- `1.0`: Standard psychoacoustic smoothing (recommended)
-- `1.5`: Moderate smoothing, good for noisy measurements
-- `2.0`: Heavy smoothing, removes fine detail but shows overall trends
-- `3.0+`: Very heavy smoothing for extremely noisy data
-
-**When to Use:**
-- **Room measurements**: Smooths room resonances and reflections for clearer overall response
-- **Speaker testing**: Reduces driver breakup and baffle effects while showing overall response shape
-- **Noisy environments**: Improves signal-to-noise ratio in measurements with background noise
-- **Publication plots**: Creates cleaner graphs for reports and presentations
-
-**Technical Implementation:**
-- Uses Gaussian-weighted averaging within frequency-dependent critical bands
-- Preserves energy conservation by operating in linear power domain
-- Applies Bark scale bandwidth approximation for computational efficiency
-
-**Log Frequency Summary Fields:**
-- `frequencies`: Center frequencies of logarithmic bins
 - `magnitudes`: Mean magnitude in dB for each frequency bin
 - `points_per_octave`: Number of frequency points per octave
 - `frequency_range`: Actual frequency range covered [f_min, f_max]
@@ -723,7 +692,6 @@ Perform FFT analysis on a specific recording by ID.
 - `duration` (float, optional): Duration to analyze in seconds
 - `normalize` (float, optional): Frequency in Hz to normalize to 0 dB
 - `points_per_octave` (integer, optional): Summarize FFT into logarithmic frequency buckets (1-100)
-- `psychoacoustic_smoothing` (float, optional): Apply psychoacoustic smoothing (0.1-5.0)
 
 **Note:** Use either `start_time` OR `start_at`, not both (start_at takes precedence if both are provided).
 
@@ -795,7 +763,6 @@ Compare two audio files using FFT difference analysis. This endpoint supports mu
 - `start_at` (float, optional): Alternative to start_time - start analysis time in seconds
 - `duration` (float, optional): Analysis duration in seconds (default: entire file)
 - `fft_size` (integer, optional): FFT size, power of 2 (64-65536, default: auto)
-- `psychoacoustic_smoothing` (float, optional): Apply psychoacoustic smoothing (0.1-5.0)
 
 **Example Requests:**
 ```bash
@@ -833,7 +800,6 @@ curl -X POST "http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc123
       "window_type": "hann",
       "fft_size": 32768,
       "points_per_octave": 16,
-      "psychoacoustic_smoothing": null,
       "normalize": 1000.0,
       "start_time": 0.0,
       "analyzed_duration": 10.0,
@@ -1802,8 +1768,6 @@ curl -X POST "http://localhost:10315/audio/analyze/fft?filename=recording_abc123
 # High-resolution log frequency analysis (24 points per octave) with normalization
 curl -X POST "http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&points_per_octave=24&normalize=1000&window=hann"
 
-# With psychoacoustic smoothing for cleaner visual presentation
-curl -X POST "http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&psychoacoustic_smoothing=1.0&points_per_octave=16"
 
 # Analyze specific time segment with custom FFT size
 curl -X POST "http://localhost:10315/audio/analyze/fft?filename=recording_abc12345.wav&start_time=5&duration=10&fft_size=16384&points_per_octave=12"
@@ -1814,8 +1778,7 @@ curl -X POST "http://localhost:10315/audio/analyze/fft?filename=recording_abc123
 # Analyze external WAV file with log frequency summarization
 curl -X POST "http://localhost:10315/audio/analyze/fft?filepath=/path/to/measurement.wav&points_per_octave=16"
 
-# Direct analysis of recording by ID (with log frequency summary and psychoacoustic smoothing)
-curl -X POST "http://localhost:10315/audio/analyze/fft-recording/abc12345?points_per_octave=16&normalize=1000&psychoacoustic_smoothing=1.5"
+curl -X POST "http://localhost:10315/audio/analyze/fft-recording/abc12345?points_per_octave=16&normalize=1000"
 
 # FFT difference analysis - compare noise playback with room recording (by recording ID)
 curl -X POST "http://localhost:10315/audio/analyze/fft-diff?recording_id1=noise_rec_123&recording_id2=room_rec_456&points_per_octave=16&normalize=1000&window=hann"

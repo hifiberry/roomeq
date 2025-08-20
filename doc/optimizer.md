@@ -2,7 +2,7 @@
 
 ## Overview
 
-The RoomEQ optimizer is a high-performance, Rust-based room equalization system that automatically generates parametric EQ filters to correct room acoustics. It uses advanced algorithms including frequency deduplication, adaptive high-pass filtering, and psychoacoustic weighting to create optimal correction filters.
+The RoomEQ optimizer is a high-performance, Rust-based room equalization system that automatically generates parametric EQ filters to correct room acoustics. It uses advanced algorithms including frequency deduplication, adaptive high-pass filtering, and frequency weighting to create optimal correction filters.
 
 ## System Architecture
 
@@ -76,26 +76,6 @@ Automatically places high-pass filter based on usable range:
 - If high-pass enabled: Use `filter_count - 1` PEQ filters + 1 HP
 - API automatically adjusts count when HP requested
 
-### 5. Psychoacoustic Weighting System
-
-Applies frequency-dependent and direction-dependent error weighting:
-
-**Frequency Weighting**:
-- **Low frequencies (20-200 Hz)**: Higher weight (corrections more audible)
-- **Mid frequencies (200-2000 Hz)**: Medium weight (balanced)  
-- **High frequencies (>5000 Hz)**: Lower weight (less critical for perception)
-
-**Direction Weighting**:
-- **Boost corrections**: Lower weight (easier to achieve, less critical)
-- **Cut corrections**: Higher weight (harder to achieve, more important)
-
-**Formula**: `weighted_error = sum(weight_freq[i] * weight_dir[i] * error[i]^2)`
-
-**Benefits**:
-- Prioritizes perceptually important corrections
-- Reduces over-correction of high frequencies
-- Balances boosts vs cuts naturally
-
 ### 6. Brute-Force Optimization Core
 
 Exhaustive search for optimal filter parameters:
@@ -126,7 +106,7 @@ Exhaustive search for optimal filter parameters:
 - **Weighting**: None (uniform error weighting)
 
 #### `weighted_flat` (Recommended)
-- **Description**: Flat response with psychoacoustic weighting
+- **Description**: Flat response with frequency weighting
 - **Use Case**: High-quality listening rooms, audiophile systems
 - **Weighting**: Frequency-dependent (emphasizes critical ranges)
 - **Curve Points**:
@@ -371,7 +351,6 @@ Each biquad calculated at measurement frequencies for optimization.
 - Brute-force optimization algorithm
 - Frequency deduplication and interpolation
 - Adaptive high-pass filter placement
-- Psychoacoustic weighting system
 - Real-time streaming output
 
 ### v0.7.0 (Current REST API)  
