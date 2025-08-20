@@ -31,6 +31,7 @@
     - [Logarithmic Frequency Summarization](#logarithmic-frequency-summarization)
     - [Psychoacoustic Smoothing](#psychoacoustic-smoothing)
   - [POST `/audio/analyze/fft-recording/<recording_id>`](#audioanalyzefft-recordingrecording_id-post)
+  - [POST `/audio/analyze/fft-diff`](#audioanalyzefft-diff-post)
 - [EQ Optimization](#eq-optimization)
   - [Target Curves and Optimizer Presets](#target-curves-and-optimizer-presets)
     - [GET `/eq/presets/targets`](#get-eqpresetstargets)
@@ -73,10 +74,11 @@ The RoomEQ Audio Processing API provides a comprehensive REST interface for micr
 
 - **Microphone Detection**: Automatic detection of USB and built-in microphones with sensitivity and gain information
 - **SPL Measurement**: Accurate sound pressure level measurement with calibrated microphones
-- **Signal Generation**: White noise and logarithmic sine sweep generation with keep-alive functionality
+- **Signal Generation**: White noise and logarithmic sine sweep generation with keep-alive functionality and filename tracking
 - **Multiple Sweep Support**: Generate consecutive sine sweeps for acoustic averaging
 - **Audio Recording**: Background recording to WAV files with secure file management
 - **FFT Analysis**: Comprehensive spectral analysis with windowing functions, normalization, and logarithmic frequency summarization
+- **FFT Difference Analysis**: Compare two recordings using spectral difference analysis for room response and equipment testing
 - **EQ Optimization**: Automatic room EQ optimization with multiple target curves and real-time progress reporting
 - **Biquad Filter Generation**: Generate parametric EQ filters with complete coefficient sets
 - **Advanced Optimization**: Rust-based high-performance optimization with frequency response calculation
@@ -98,7 +100,7 @@ Get API information and endpoint overview.
 ```json
 {
   "message": "RoomEQ Audio Processing API",
-  "version": "0.3.0",
+  "version": "0.6.0",
   "framework": "Flask",
   "description": "REST API for microphone detection, SPL measurement, audio signal generation, recording, and FFT analysis for acoustic measurements and room equalization",
   "endpoints": {
@@ -108,14 +110,15 @@ Get API information and endpoint overview.
     "measurements": {"/spl/measure": "SPL measurement"},
     "signal_generation": {
       "/audio/noise/start": "White noise playback",
-      "/audio/noise/keep-playing": "Extend playbook", 
+      "/audio/noise/keep-playing": "Extend playback", 
       "/audio/noise/stop": "Stop playback",
-      "/audio/noise/status": "Playbook status",
+      "/audio/noise/status": "Playback status",
       "/audio/sweep/start": "Sine sweep generation"
     },
     "fft_analysis": {
       "/audio/analyze/fft": "FFT analysis of WAV files",
-      "/audio/analyze/fft-recording/<id>": "FFT analysis of recordings"
+      "/audio/analyze/fft-recording/<id>": "FFT analysis of recordings",
+      "/audio/analyze/fft-diff": "FFT difference analysis between two recordings"
     },
     "recording": {
       "/audio/record/start": "Start recording",
@@ -145,9 +148,10 @@ curl -X GET http://localhost:10315/version
     "Microphone detection with sensitivity and gain",
     "SPL measurement",
     "FFT analysis with windowing, normalization, and logarithmic frequency summarization",
+    "FFT difference analysis for comparing two recordings",
     "Audio recording with automatic cleanup",
     "Sine sweep generation",
-    "White/pink noise generation",
+    "White/pink noise generation with filename tracking",
     "Automatic room EQ optimization with multiple target curves",
     "Real-time optimization progress reporting",
     "Parametric EQ filter generation (biquad coefficients)",
@@ -312,6 +316,7 @@ curl -X POST "http://localhost:10315/audio/noise/start?duration=10&amplitude=0.4
   "duration": 5.0,
   "amplitude": 0.3,
   "device": "hw:0,0",
+  "filename": "noise_a1b2c3d4-e5f6-7890-abcd-ef1234567890.wav",
   "stop_time": "2025-08-18T15:30:45.123456",
   "message": "Noise playback started for 5.0 seconds"
 }
@@ -387,6 +392,7 @@ curl -X GET http://localhost:10315/audio/noise/status
   "active": true,
   "amplitude": 0.5,
   "device": "default",
+  "filename": "noise_a1b2c3d4-e5f6-7890-abcd-ef1234567890.wav",
   "remaining_seconds": 2.3,
   "stop_time": "2025-08-14T15:30:45.123456"
 }
@@ -738,6 +744,112 @@ Perform FFT analysis on a specific recording by ID.
 - `400 Bad Request`: Invalid parameters or file format
 - `404 Not Found`: Recording or file not found
 - `500 Internal Server Error`: Analysis processing error
+
+### `/audio/analyze/fft-diff` [POST]
+Compare two audio recordings using FFT difference analysis. This endpoint calculates the spectral difference between two recordings, typically used to compare noise playback with actual room recordings.
+
+**Parameters:**
+- `recording1_id` (string, required): ID of the first recording (typically the noise playback)
+- `recording2_id` (string, required): ID of the second recording (typically the room recording)
+- `window` (string, optional): Window function - "hann", "hamming", "blackman", or "none" (default: "hann")
+- `points_per_octave` (integer, optional): Logarithmic frequency resolution (1-100, default: 12)
+- `normalize` (float, optional): Frequency in Hz to normalize both recordings to 0 dB before comparison
+- `start_time1` (float, optional): Start analysis time for recording 1 in seconds (default: 0)
+- `duration1` (float, optional): Analysis duration for recording 1 in seconds (default: entire file)
+- `start_time2` (float, optional): Start analysis time for recording 2 in seconds (default: 0)
+- `duration2` (float, optional): Analysis duration for recording 2 in seconds (default: entire file)
+
+**Example Request:**
+```bash
+curl -X POST "http://localhost:10315/audio/analyze/fft-diff" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "recording1_id": "noise_rec_123",
+    "recording2_id": "room_rec_456",
+    "points_per_octave": 16,
+    "normalize": 1000,
+    "window": "hann"
+  }'
+```
+
+**Success Response (200):**
+```json
+{
+  "status": "success",
+  "comparison_info": {
+    "recording1": {
+      "id": "noise_rec_123",
+      "filename": "recording_noise_rec_123.wav",
+      "analyzed_duration": 10.0,
+      "start_time": 0.0
+    },
+    "recording2": {
+      "id": "room_rec_456", 
+      "filename": "recording_room_rec_456.wav",
+      "analyzed_duration": 10.0,
+      "start_time": 0.0
+    },
+    "analysis_parameters": {
+      "window": "hann",
+      "points_per_octave": 16,
+      "normalize": 1000.0
+    }
+  },
+  "difference_analysis": {
+    "frequencies": [20.0, 23.8, 28.3, 33.7, 40.1, 47.8, 56.8, 67.6, 80.4, 95.6, 113.8, 135.4, 161.0, 191.7, 228.2, 271.7, 323.6, 385.4, 459.2, 547.1, 651.9, 776.5, 925.0, 1102.3, 1313.4, 1565.0, 1864.7, 2222.4, 2649.0, 3158.1, 3765.6, 4490.2, 5353.8, 6380.5, 7599.3, 9056.8, 10799.8, 12876.4, 15343.5, 18282.5],
+    "magnitude_differences": [-2.1, -1.8, -1.2, -0.8, -0.3, 0.2, 0.8, 1.5, 2.3, 2.8, 3.1, 2.9, 2.4, 1.8, 1.2, 0.5, -0.2, -0.9, -1.6, -2.2, -2.8, -3.1, -2.9, -2.4, -1.8, -1.1, -0.4, 0.3, 1.0, 1.7, 2.3, 2.8, 3.2, 3.4, 3.1, 2.7, 2.1, 1.4, 0.7, 0.1],
+    "statistics": {
+      "mean_difference": 0.85,
+      "rms_difference": 2.12,
+      "max_positive_diff": 3.4,
+      "max_negative_diff": -3.1,
+      "frequency_of_max_positive": 6380.5,
+      "frequency_of_max_negative": 2649.0,
+      "correlation_coefficient": 0.73
+    },
+    "frequency_bands_analysis": {
+      "sub_bass": {"range": "20-60 Hz", "avg_difference": -1.2, "rms_difference": 1.4},
+      "bass": {"range": "60-250 Hz", "avg_difference": 1.8, "rms_difference": 2.1},
+      "low_midrange": {"range": "250-500 Hz", "avg_difference": 0.3, "rms_difference": 0.8},
+      "midrange": {"range": "500-2000 Hz", "avg_difference": -1.5, "rms_difference": 2.3},
+      "upper_midrange": {"range": "2000-4000 Hz", "avg_difference": 1.2, "rms_difference": 1.9},
+      "presence": {"range": "4000-6000 Hz", "avg_difference": 2.8, "rms_difference": 3.1},
+      "brilliance": {"range": "6000-20000 Hz", "avg_difference": 1.9, "rms_difference": 2.4}
+    }
+  },
+  "individual_analyses": {
+    "recording1_fft": {
+      "peak_frequency": 1000.0,
+      "peak_magnitude": -18.5,
+      "spectral_centroid": 1250.3
+    },
+    "recording2_fft": {
+      "peak_frequency": 1200.0,
+      "peak_magnitude": -16.2,
+      "spectral_centroid": 1420.8
+    }
+  },
+  "timestamp": "2024-01-01T12:30:00"
+}
+```
+
+**Response Fields:**
+- `difference_analysis.frequencies`: Frequency points for the comparison (Hz)
+- `difference_analysis.magnitude_differences`: Magnitude difference (recording2 - recording1) in dB at each frequency
+- `difference_analysis.statistics`: Overall statistical analysis of the differences
+- `frequency_bands_analysis`: Difference analysis broken down by standard frequency bands
+- `individual_analyses`: Key metrics from each individual FFT analysis
+
+**Use Cases:**
+- **Room Response Analysis**: Compare noise playback with room recording to understand room effects
+- **Equipment Testing**: Compare direct recordings with processed audio to measure equipment impact
+- **Before/After Comparisons**: Analyze the effect of acoustic treatments or EQ adjustments
+- **Signal Quality Assessment**: Measure degradation or enhancement between source and recorded audio
+
+**Error Responses:**
+- `400 Bad Request`: Invalid parameters, missing recordings, or incompatible audio formats
+- `404 Not Found`: One or both recordings not found
+- `500 Internal Server Error`: FFT analysis or comparison processing error
 
 ## EQ Optimization
 
@@ -1658,6 +1770,31 @@ curl -X POST "http://localhost:10315/audio/analyze/fft?filepath=/path/to/measure
 
 # Direct analysis of recording by ID (with log frequency summary and psychoacoustic smoothing)
 curl -X POST "http://localhost:10315/audio/analyze/fft-recording/abc12345?points_per_octave=16&normalize=1000&psychoacoustic_smoothing=1.5"
+
+# FFT difference analysis - compare noise playback with room recording
+curl -X POST "http://localhost:10315/audio/analyze/fft-diff" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "recording1_id": "noise_rec_123",
+    "recording2_id": "room_rec_456",
+    "points_per_octave": 16,
+    "normalize": 1000,
+    "window": "hann"
+  }'
+
+# FFT difference with custom time segments for each recording
+curl -X POST "http://localhost:10315/audio/analyze/fft-diff" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "recording1_id": "clean_signal_789",
+    "recording2_id": "processed_signal_012",
+    "points_per_octave": 12,
+    "start_time1": 2.0,
+    "duration1": 8.0,
+    "start_time2": 1.0,
+    "duration2": 10.0,
+    "normalize": 500
+  }'
 ```
 
 **Common points_per_octave values:**
@@ -1665,6 +1802,12 @@ curl -X POST "http://localhost:10315/audio/analyze/fft-recording/abc12345?points
 - `16`: Good balance of resolution and data size (161 points)
 - `24`: High resolution for detailed analysis (241 points)
 - `48`: Very high resolution for research (481 points)
+
+**FFT Difference Analysis Use Cases:**
+- **Room Response**: Compare noise source with room recording to analyze acoustic properties
+- **Equipment Testing**: Measure processing effects by comparing input and output recordings
+- **Quality Assessment**: Analyze signal degradation or enhancement through system processing
+- **Before/After Studies**: Evaluate changes from acoustic treatments or EQ adjustments
 ```
 
 ### Automated Measurement Sequence
