@@ -9,6 +9,8 @@
   - [Information Endpoints](#information-endpoints)
     - [GET `/`](#get-)
     - [GET `/version`](#get-version)
+  - [Configuration](#configuration)
+    - [GET `/config/fft-backend`](#get-configfft-backend)
   - [Microphone Detection](#microphone-detection)
     - [GET `/microphones`](#get-microphones)
     - [GET `/microphones/raw`](#get-microphonesraw)
@@ -77,11 +79,12 @@ The RoomEQ Audio Processing API provides a comprehensive REST interface for micr
 - **Signal Generation**: White noise and logarithmic sine sweep generation with keep-alive functionality, filename tracking, and automatic cleanup
 - **Multiple Sweep Support**: Generate consecutive sine sweeps for acoustic averaging
 - **Audio Recording**: Background recording to WAV files with secure file management and automatic cleanup
-- **FFT Analysis**: Comprehensive spectral analysis with windowing functions, normalization, and logarithmic frequency summarization
+- **FFT Analysis**: Comprehensive spectral analysis with windowing functions, normalization, and logarithmic frequency summarization with configurable Python/Rust backends
 - **FFT Difference Analysis**: Compare two recordings using spectral difference analysis for room response and equipment testing
 - **EQ Optimization**: Automatic room EQ optimization with multiple target curves and real-time progress reporting
 - **Biquad Filter Generation**: Generate parametric EQ filters with complete coefficient sets
 - **Advanced Optimization**: Rust-based high-performance optimization with frequency response calculation
+- **Configurable Backends**: Choose between Python and high-performance Rust implementations for FFT processing
 - **Real-time Control**: Start, stop, extend, and monitor operations through REST endpoints
 - **Cross-Origin Support**: CORS enabled for web application integration
 
@@ -163,10 +166,37 @@ curl -X GET http://localhost:10315/version
     "flask_version": "2.x",
     "threading": "Multi-threaded request handling",
     "audio_backend": "ALSA with arecord fallback for compatibility",
+    "fft_backend": "Rust FFT implementation",
     "optimization_backend": "Rust optimizer with least squares curve fitting and real-time frequency response"
   }
 }
 ```
+
+### Configuration
+
+#### GET `/config/fft-backend`
+Get current FFT backend configuration and availability.
+
+**Response:**
+```json
+{
+  "current_backend": "rust",
+  "available_backends": ["python", "rust"],
+  "configuration_source": "Environment variable ROOMEQ_FFT_BACKEND or default",
+  "rust_available": true
+}
+```
+
+**Fields:**
+- `current_backend`: Currently active FFT backend ("python" or "rust")
+- `available_backends`: List of supported FFT backends
+- `configuration_source`: How the backend was configured
+- `rust_available`: Whether the Rust FFT binary is available (null if not using Rust backend)
+
+**Configuration:**
+The FFT backend can be set using the `ROOMEQ_FFT_BACKEND` environment variable:
+- `rust` (default): Use high-performance Rust FFT implementation with automatic Python fallback
+- `python`: Force use of Python FFT implementation
 
 ### Microphone Detection
 
@@ -412,8 +442,8 @@ For sine sweeps, additional fields are included:
 - `sweeps`: Number of consecutive sweeps
 - `sweep_duration`: Duration per sweep in seconds
 - `total_duration`: Total duration of all sweeps
-- `compensation_mode`: Amplitude compensation for native sweep generator (`"none" | "inv_sqrt_f" | "sqrt_f"`, default `"sqrt_f"`)
-- `generator`: Signal source used (`"native" | "sine_sox"`)
+- `compensation_mode`: Amplitude compensation for sweep generation (`"none" | "inv_sqrt_f" | "sqrt_f"`, default `"none"`)
+
 
 ### Sine Sweep Generation
 
@@ -426,8 +456,7 @@ Start logarithmic sine sweep(s) with optional multiple repeat support.
 - `duration` (optional): Duration per sweep in seconds (1.0-30.0, default: 5.0)
 - `sweeps` (optional): Number of consecutive sweeps (1-10, default: 1)
 - `amplitude` (optional): Amplitude level (0.0-1.0, default: 0.5)
-- `compensation_mode` (optional): Amplitude compensation envelope for the native generator (`none | inv_sqrt_f | sqrt_f`, default: `sqrt_f`)
-- `generator` (optional): Signal generator implementation to use (`native | sine_sox`, default: `native`). When `sine_sox` is used, a temporary WAV is generated via SoX in `/tmp`, loaded, then deleted before playback.
+- `compensation_mode` (optional): Amplitude compensation envelope (`none | inv_sqrt_f | sqrt_f`, default: `none`)
 - `device` (optional): Output device (e.g., "hw:0,0"). Uses default if not specified
 
 **Example Requests:**
@@ -438,8 +467,8 @@ POST /audio/sweep/start?start_freq=20&end_freq=20000&duration=10&amplitude=0.4
 # Multiple sweeps for averaging - 3 consecutive sweeps
 POST /audio/sweep/start?start_freq=100&end_freq=8000&duration=5&sweeps=3&amplitude=0.3
 
-# Use SoX-based generator (creates a temp WAV in /tmp, then starts playback)
-POST /audio/sweep/start?start_freq=20&end_freq=20000&duration=8&sweeps=2&amplitude=0.3&generator=sine_sox
+# Extended frequency range with compensation
+POST /audio/sweep/start?start_freq=10&end_freq=22000&duration=8&sweeps=2&amplitude=0.3&compensation_mode=inv_sqrt_f
 ```
 
 **Response:**
@@ -454,7 +483,6 @@ POST /audio/sweep/start?start_freq=20&end_freq=20000&duration=8&sweeps=2&amplitu
   "total_duration": 15.0,
   "amplitude": 0.3,
   "compensation_mode": "sqrt_f",
-  "generator": "native",
   "device": "default",
   "filename": "roomeq_sweep_abc123def456.wav",
   "stop_time": "2025-08-15T12:30:45.123456",
@@ -463,8 +491,8 @@ POST /audio/sweep/start?start_freq=20&end_freq=20000&duration=8&sweeps=2&amplitu
 ```
 
 **Behavior Notes:**
-- When `generator=sine_sox`, the server blocks until SoX has created the temporary WAV file and playback has started, then returns the response. The WAV file is removed after loading.
-- The `compensation_mode` parameter applies only to the native generator. The SoX generator uses SoX’s sine sweep synthesis without the internal compensation envelope.
+- The API uses the native Python logarithmic sine sweep generator with precise frequency control and optimized sweep generation
+- The `compensation_mode` parameter allows frequency-dependent amplitude scaling for better signal-to-noise ratio across the spectrum
 
 **Use Cases:**
 - **Room Response Analysis**: Full spectrum sweeps (20 Hz - 20 kHz)
@@ -753,10 +781,10 @@ Compare two audio files using FFT difference analysis. This endpoint supports mu
 
 **File Input Options (choose exactly one for each file):**
 - `recording_id1` (string): First recording ID from recording system
-- `filename1` (string): First filename in recording directory (alternative to recording_id1)  
+- `filename1` (string): First filename in recording directory (alternative to recording_id1). Can be just filename or full path.
 - `filepath1` (string): Full path to first audio file (alternative to recording_id1/filename1)
 - `recording_id2` (string): Second recording ID from recording system
-- `filename2` (string): Second filename in recording directory (alternative to recording_id2)
+- `filename2` (string): Second filename in recording directory (alternative to recording_id2). Can be just filename or full path.
 - `filepath2` (string): Full path to second audio file (alternative to recording_id2/filename2)
 
 **Analysis Options:**
@@ -1733,8 +1761,8 @@ curl -X POST "http://localhost:10315/audio/sweep/start?start_freq=100&end_freq=8
 # Focused frequency range for speaker testing
 curl -X POST "http://localhost:10315/audio/sweep/start?start_freq=200&end_freq=2000&duration=3&amplitude=0.5"
 
-# SoX-based sweep (uses SoX to synthesize, then plays the generated WAV)
-curl -X POST "http://localhost:10315/audio/sweep/start?start_freq=20&end_freq=20000&duration=8&sweeps=2&amplitude=0.3&generator=sine_sox"
+# Extended frequency range with compensation
+curl -X POST "http://localhost:10315/audio/sweep/start?start_freq=20&end_freq=20000&duration=8&sweeps=2&amplitude=0.3&compensation_mode=inv_sqrt_f"
 
 # Check sweep status (shows sweep details)
 curl -X GET http://localhost:10315/audio/noise/status
@@ -2211,14 +2239,21 @@ This ensures that audio stops within 3 seconds of a web browser closing or losin
 # Start server using the roomeq-server command (recommended)
 roomeq-server
 
-# Or start manually with Python
+# Or start manually with Python (uses Rust FFT backend by default)
 cd /path/to/roomeq
 PYTHONPATH=src python3 -m roomeq.roomeq_server
+
+# Force Python FFT backend
+cd /path/to/roomeq
+ROOMEQ_FFT_BACKEND=python PYTHONPATH=src python3 -m roomeq.roomeq_server
 
 # Or using the main function directly
 cd /path/to/roomeq
 python3 -c "import sys; sys.path.insert(0, 'src'); from roomeq.roomeq_server import main; main()"
 ```
+
+**Environment Variables:**
+- `ROOMEQ_FFT_BACKEND`: Set to `python` or `rust` to select FFT backend (default: `rust` with automatic Python fallback)
 
 The server will be available at:
 - **API endpoints**: `http://localhost:10315`
