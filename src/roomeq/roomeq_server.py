@@ -1697,7 +1697,7 @@ def root():
                     "total_duration": 24.0,
                     "compensation_mode": "sqrt_f",
                     "generator": "native",
-                    "filename": null
+                    "filename": None
                 }
             },
             "recording_status": {
@@ -1806,8 +1806,8 @@ def root():
                             "window_type": "hann",
                             "fft_size": 32768,
                             "points_per_octave": 16,
-                            "psychoacoustic_smoothing": null,
-                            "normalize": null
+                            "psychoacoustic_smoothing": None,
+                            "normalize": None
                         }
                     },
                     "fft_difference": {
