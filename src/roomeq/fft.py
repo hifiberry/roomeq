@@ -3,12 +3,21 @@ FFT Analysis Module for RoomEQ Audio Processing
 
 This module provides Fast Fourier Transform (FFT) analysis functionality for WAV files,
 including spectral analysis, peak detection, frequency band analysis, and windowing functions.
+Core FFT computation and WAV file reading - smoothing and plotting moved to fft_utils.py.
 """
 
 import os
 import wave
 import numpy as np
 from typing import Tuple, Dict, List, Union
+from pathlib import Path
+from . import fft_utils
+
+try:
+    import soundfile as sf
+    HAS_SOUNDFILE = True
+except ImportError:
+    HAS_SOUNDFILE = False
 
 
 def load_wav_file(filepath: str) -> Tuple[np.ndarray, int, Dict]:
@@ -27,6 +36,7 @@ def load_wav_file(filepath: str) -> Tuple[np.ndarray, int, Dict]:
     Raises:
         RuntimeError: If file cannot be loaded or format is unsupported
     """
+    # First try with standard wave module
     try:
         with wave.open(filepath, 'rb') as wav_file:
             # Get WAV file parameters
@@ -70,6 +80,56 @@ def load_wav_file(filepath: str) -> Tuple[np.ndarray, int, Dict]:
             
             return audio_data, sample_rate, metadata
             
+    except Exception as wave_error:
+        # If standard wave module fails, try soundfile as fallback
+        if HAS_SOUNDFILE and ("unknown format" in str(wave_error) or "format" in str(wave_error).lower()):
+            try:
+                # Use soundfile to load the WAV file
+                audio_data, sample_rate = sf.read(filepath, dtype='float32')
+                
+                # Handle multi-channel audio - convert to mono if needed
+                if len(audio_data.shape) > 1 and audio_data.shape[1] > 1:
+                    channels = audio_data.shape[1]
+                    audio_data = np.mean(audio_data, axis=1)  # Average channels to mono
+                else:
+                    channels = 1 if len(audio_data.shape) == 1 else audio_data.shape[1]
+                
+                # Calculate metadata
+                duration = len(audio_data) / sample_rate
+                total_samples = len(audio_data)
+                
+                # Try to get bit depth from file info
+                try:
+                    info = sf.info(filepath)
+                    bit_depth = getattr(info, 'subtype_info', '').split('bit')[0] or '32'  # Default for float
+                    try:
+                        bit_depth = int(bit_depth)
+                    except (ValueError, TypeError):
+                        bit_depth = 32  # Default for float32
+                except:
+                    bit_depth = 32  # Default fallback
+                
+                metadata = {
+                    'duration': duration,
+                    'sample_rate': int(sample_rate),
+                    'channels': channels,
+                    'bit_depth': bit_depth,
+                    'total_samples': total_samples,
+                    'loaded_with': 'soundfile'
+                }
+                
+                return audio_data, int(sample_rate), metadata
+                
+            except Exception as sf_error:
+                raise RuntimeError(f"Failed to load WAV file with both wave and soundfile modules. "
+                                 f"Wave error: {wave_error}. Soundfile error: {sf_error}")
+        else:
+            if not HAS_SOUNDFILE:
+                raise RuntimeError(f"Failed to load WAV file: {wave_error}. "
+                                 f"For better format support, install soundfile: pip install soundfile")
+            else:
+                raise RuntimeError(f"Failed to load WAV file: {wave_error}")
+    
     except Exception as e:
         raise RuntimeError(f"Failed to load WAV file: {str(e)}")
 
@@ -162,68 +222,20 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
         # Create frequency axis
         frequencies = np.fft.rfftfreq(fft_size, 1/sample_rate)
         
-        # Find peaks
-        peak_indices = []
-        peak_freqs = []
-        peak_magnitudes = []
-        
-        # Simple peak detection: find local maxima above threshold
-        threshold_db = np.max(magnitude_db) - 40  # 40 dB below max
-        
-        for i in range(1, len(magnitude_db) - 1):
-            if (magnitude_db[i] > magnitude_db[i-1] and 
-                magnitude_db[i] > magnitude_db[i+1] and 
-                magnitude_db[i] > threshold_db):
-                peak_indices.append(i)
-                peak_freqs.append(frequencies[i])
-                peak_magnitudes.append(magnitude_db[i])
-        
-        # Sort peaks by magnitude (descending)
-        peak_data = list(zip(peak_freqs, peak_magnitudes, peak_indices))
-        peak_data.sort(key=lambda x: x[1], reverse=True)
-        
-        # Take top 20 peaks
-        top_peaks = peak_data[:20]
-        
-        # Overall peak frequency and magnitude
-        max_idx = np.argmax(magnitude_db)
-        peak_frequency = float(frequencies[max_idx])
-        peak_magnitude = float(magnitude_db[max_idx])
-        
         # Compute spectral statistics
         total_power = np.sum(magnitude**2)
         spectral_centroid = np.sum(frequencies * magnitude**2) / total_power if total_power > 0 else 0
         
         # Frequency bands analysis with named bands
-        def analyze_band(f_low: float, f_high: float, name: str) -> Dict:
-            band_indices = np.where((frequencies >= f_low) & (frequencies <= f_high))[0]
-            if len(band_indices) > 0:
-                band_magnitudes = magnitude_db[band_indices]
-                band_frequencies = frequencies[band_indices]
-                avg_magnitude = float(np.mean(band_magnitudes))
-                peak_idx = np.argmax(band_magnitudes)
-                peak_freq = float(band_frequencies[peak_idx])
-                return {
-                    "range": f"{f_low}-{f_high} Hz",
-                    "avg_magnitude": avg_magnitude,
-                    "peak_frequency": peak_freq
-                }
-            else:
-                return {
-                    "range": f"{f_low}-{f_high} Hz",
-                    "avg_magnitude": -100.0,
-                    "peak_frequency": f_low
-                }
+        frequency_bands = fft_utils.analyze_frequency_bands(frequencies, magnitude_db)
         
-        frequency_bands = {
-            "sub_bass": analyze_band(20, 60, "Sub-bass"),
-            "bass": analyze_band(60, 250, "Bass"),
-            "low_midrange": analyze_band(250, 500, "Low midrange"),
-            "midrange": analyze_band(500, 2000, "Midrange"),
-            "upper_midrange": analyze_band(2000, 4000, "Upper midrange"),
-            "presence": analyze_band(4000, 6000, "Presence"),
-            "brilliance": analyze_band(6000, 20000, "Brilliance")
-        }
+        # Find peaks
+        peak_data = fft_utils.find_peaks(frequencies, magnitude_db)
+        
+        # Overall peak frequency and magnitude
+        max_idx = np.argmax(magnitude_db)
+        peak_frequency = float(frequencies[max_idx])
+        peak_magnitude = float(magnitude_db[max_idx])
         
         # Prepare base result
         result = {
@@ -238,6 +250,7 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
             'peak_magnitude': peak_magnitude,
             'spectral_centroid': float(spectral_centroid),
             'frequency_bands': frequency_bands,
+            'peaks': peak_data,
             'spectral_density': {
                 'type': 'Magnitude Spectrum',
                 'units': 'dB re FS',
@@ -250,7 +263,7 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
         # Add logarithmic summarization if requested (after normalization)
         if points_per_octave is not None:
             try:
-                log_summary = summarize_fft_log_frequency(
+                log_summary = fft_utils.summarize_fft_log_frequency(
                     frequencies, magnitude_db, points_per_octave
                 )
                 
@@ -259,7 +272,7 @@ def compute_fft(audio_data: np.ndarray, sample_rate: int, window_type: str = 'ha
                     try:
                         log_freqs = np.array(log_summary['frequencies'])
                         log_mags = np.array(log_summary['magnitudes'])
-                        smoothed_log_mags = apply_psychoacoustic_smoothing(
+                        smoothed_log_mags = fft_utils.apply_psychoacoustic_smoothing(
                             log_freqs, log_mags, psychoacoustic_smoothing
                         )
                         log_summary['magnitudes'] = smoothed_log_mags.tolist()
@@ -420,7 +433,7 @@ def compute_fft_time_averaged(audio_data: np.ndarray, sample_rate: int, window_t
         smoothing_info = {}
         if psychoacoustic_smoothing is not None:
             try:
-                magnitude_db = apply_psychoacoustic_smoothing(
+                magnitude_db = fft_utils.apply_psychoacoustic_smoothing(
                     frequencies, magnitude_db, psychoacoustic_smoothing
                 )
                 smoothing_info = {
@@ -470,7 +483,7 @@ def compute_fft_time_averaged(audio_data: np.ndarray, sample_rate: int, window_t
 
         if points_per_octave is not None:
             try:
-                log_summary = summarize_fft_log_frequency(
+                log_summary = fft_utils.summarize_fft_log_frequency(
                     frequencies, magnitude_db, points_per_octave
                 )
                 
@@ -479,7 +492,7 @@ def compute_fft_time_averaged(audio_data: np.ndarray, sample_rate: int, window_t
                     try:
                         log_freqs = np.array(log_summary['frequencies'])
                         log_mags = np.array(log_summary['magnitudes'])
-                        smoothed_log_mags = apply_psychoacoustic_smoothing(
+                        smoothed_log_mags = fft_utils.apply_psychoacoustic_smoothing(
                             log_freqs, log_mags, psychoacoustic_smoothing
                         )
                         log_summary['magnitudes'] = smoothed_log_mags.tolist()
@@ -633,195 +646,3 @@ def validate_fft_parameters(fft_size: int = None, window_type: str = 'hann') -> 
         'fft_size': fft_size,
         'window_type': window_type
     }
-
-
-def apply_psychoacoustic_smoothing(frequencies: np.ndarray, magnitudes: np.ndarray,
-                                  smoothing_factor: float = 1.0) -> np.ndarray:
-    """
-    Apply psychoacoustic smoothing to FFT data using frequency-dependent bandwidth.
-    
-    This smoothing follows critical bands of human hearing, providing narrow bandwidth
-    smoothing at low frequencies and wider bandwidth at high frequencies, similar to
-    the behavior of the human auditory system.
-    
-    Args:
-        frequencies: Frequency array from FFT
-        magnitudes: Magnitude array in dB from FFT
-        smoothing_factor: Smoothing strength multiplier (0.5 = less, 2.0 = more)
-        
-    Returns:
-        Smoothed magnitude array in dB
-        
-    Raises:
-        ValueError: If parameters are invalid
-    """
-    try:
-        if len(frequencies) != len(magnitudes):
-            raise ValueError("Frequency and magnitude arrays must have same length")
-        
-        if smoothing_factor <= 0:
-            raise ValueError("Smoothing factor must be positive")
-        
-        # Convert to numpy arrays if needed
-        freq = np.asarray(frequencies, dtype=np.float64)
-        mag = np.asarray(magnitudes, dtype=np.float64)
-        
-        # Skip DC component if present
-        start_idx = 1 if freq[0] == 0 else 0
-        
-        smoothed = mag.copy()
-        
-        # Apply smoothing to each frequency bin
-        for i in range(start_idx, len(freq)):
-            f_center = freq[i]
-            
-            if f_center <= 0:
-                continue
-                
-            # Calculate critical band width using Bark scale approximation
-            # Critical bandwidth in Hz: CBW ≈ 25 + 75 * (1 + 1.4 * (f/1000)^0.69)^0.64
-            # Simplified approximation for computational efficiency
-            if f_center < 500:
-                # Low frequencies: narrower bandwidth
-                cbw = 25 + 75 * (f_center / 1000.0) ** 0.5
-            else:
-                # Higher frequencies: wider bandwidth following Bark scale
-                cbw = 25 + 75 * (1 + 1.4 * (f_center / 1000.0) ** 0.69) ** 0.64
-            
-            # Apply smoothing factor
-            bandwidth = cbw * smoothing_factor
-            
-            # Define smoothing window around current frequency
-            f_low = f_center - bandwidth / 2
-            f_high = f_center + bandwidth / 2
-            
-            # Find frequency bins within the smoothing window
-            window_indices = np.where((freq >= f_low) & (freq <= f_high))[0]
-            
-            if len(window_indices) > 1:
-                # Weight function: Gaussian-like weighting centered on f_center
-                window_freqs = freq[window_indices]
-                weights = np.exp(-0.5 * ((window_freqs - f_center) / (bandwidth / 4)) ** 2)
-                
-                # Weighted average in linear domain for proper energy conservation
-                window_mag_linear = 10 ** (mag[window_indices] / 10.0)
-                weighted_avg_linear = np.average(window_mag_linear, weights=weights)
-                
-                # Convert back to dB
-                smoothed[i] = 10 * np.log10(weighted_avg_linear + 1e-20)
-        
-        return smoothed
-        
-    except Exception as e:
-        raise RuntimeError(f"Psychoacoustic smoothing failed: {str(e)}")
-
-
-def summarize_fft_log_frequency(frequencies: np.ndarray, magnitudes: np.ndarray, 
-                               points_per_octave: int = 16, 
-                               f_min: float = 20.0, f_max: float = 20000.0) -> Dict:
-    """
-    Summarize FFT data into logarithmically spaced frequency buckets using C reference algorithm.
-    
-    Args:
-        frequencies: Frequency array from FFT
-        magnitudes: Magnitude array in dB from FFT
-        points_per_octave: Number of frequency points per octave
-        f_min: Minimum frequency to include (Hz)
-        f_max: Maximum frequency to include (Hz)
-        
-    Returns:
-        Dict containing summarized frequency and magnitude data
-        
-    Raises:
-        ValueError: If parameters are invalid
-    """
-    try:
-        # Validate inputs
-        if points_per_octave < 1 or points_per_octave > 100:
-            raise ValueError("points_per_octave must be between 1 and 100")
-        
-        if f_min <= 0 or f_max <= f_min:
-            raise ValueError("f_min must be positive and f_max must be greater than f_min")
-        
-        # Clip frequency range to available data
-        f_min = max(f_min, frequencies[1])  # Skip DC component
-        f_max = min(f_max, frequencies[-1])
-        
-        if f_min >= f_max:
-            raise ValueError("No frequency data available in the specified range")
-        
-        # Calculate number of octaves and output points
-        n_octaves = np.log2(f_max / f_min)
-        # Use the C algorithm approach: fixed number of points across the range
-        n_points = int(n_octaves * points_per_octave)
-        
-        # Calculate the frequency spacing factor (from C code)
-        x = pow(f_max / f_min, 1.0 / n_points)
-        
-        # Calculate frequency resolution (video bandwidth)
-        freq_resolution = frequencies[1] - frequencies[0]
-        
-        # Initialize output arrays
-        summarized_frequencies = []
-        summarized_magnitudes = []
-        bin_info = []
-        
-        # Process each logarithmic bin using C algorithm
-        for i in range(n_points):
-            # Calculate bin boundaries (from C code)
-            fr_start = f_min * pow(x, i)
-            fr_end = f_min * pow(x, i + 1)
-            
-            # Find FFT bins within this range (from C code logic)
-            start_bin_idx = int(fr_start / freq_resolution + 0.5)
-            
-            # Accumulate total power in this logarithmic frequency band
-            sum_power = 0.0
-            bin_idx = start_bin_idx
-            
-            # Process all FFT bins that fall within this logarithmic bin range
-            while bin_idx < len(frequencies) and frequencies[bin_idx] < fr_end:
-                if bin_idx < len(magnitudes):
-                    # Convert dB magnitude to power (linear)
-                    power_linear = 10**(magnitudes[bin_idx] / 10.0)
-                    sum_power += power_linear
-                bin_idx += 1
-            
-            if sum_power > 0:
-                # Total power in the logarithmic band
-                avg_magnitude_db = 10 * np.log10(sum_power + 1e-20)
-            else:
-                # No data in this bin
-                avg_magnitude_db = -100.0
-            
-            # Calculate logarithmic average frequency (from C code)
-            if fr_end != fr_start and fr_end > 0 and fr_start > 0:
-                log_avg_freq = (fr_end - fr_start) / np.log(fr_end / fr_start)
-            else:
-                log_avg_freq = (fr_start + fr_end) / 2.0
-            
-            summarized_frequencies.append(float(log_avg_freq))
-            summarized_magnitudes.append(float(avg_magnitude_db))
-            
-            bin_info.append({
-                "center_freq": float(log_avg_freq),
-                "freq_range": [float(fr_start), float(fr_end)],
-                "band_power_linear": float(10**(avg_magnitude_db / 10.0)) if avg_magnitude_db > -1e9 else 0.0,
-                "mean_magnitude": float(avg_magnitude_db),
-                "min_magnitude": float(avg_magnitude_db),
-                "max_magnitude": float(avg_magnitude_db)
-            })
-        
-        return {
-            "frequencies": summarized_frequencies,
-            "magnitudes": summarized_magnitudes,
-            "points_per_octave": points_per_octave,
-            "frequency_range": [float(f_min), float(f_max)],
-            "n_octaves": float(n_octaves),
-            "n_points": len(summarized_frequencies),
-            "bin_details": bin_info,
-            "algorithm": "C_reference_implementation"
-        }
-        
-    except Exception as e:
-        raise RuntimeError(f"FFT summarization failed: {str(e)}")
