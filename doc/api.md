@@ -48,6 +48,7 @@
     - [GET `/eq/presets/optimizers`](#get-eqpresetsoptimizers)
   - [EQ Optimization Process](#eq-optimization-process)
     - [POST `/eq/optimize`](#post-eqoptimize)
+    - [POST `/eq/usable-range`](#post-equsable-range)
   - [Legacy Async API Endpoints (Deprecated)](#legacy-async-api-endpoints-deprecated)
     - [GET `/eq/optimize/status/<optimization_id>`](#get-eqoptimizestatusoptimization_id)
     - [POST `/eq/optimize/cancel/<optimization_id>`](#post-eqoptimizecanceloptimization_id)
@@ -1599,6 +1600,120 @@ The `frequency_response` events also include the `current_filter_set` and `total
 - **Adaptive High-pass**: Intelligent high-pass filter placement
 - **Usable Range Detection**: Automatically detects useful frequency range
 - **Text Format Output**: Ready-to-use filter strings for EQ software
+
+#### POST `/eq/usable-range`
+Detect usable frequency range from measured curve data without running full optimization. This endpoint is useful for preprocessing measurements to determine optimization boundaries and frequency limits before running the full optimization process.
+
+**Content-Type:** `application/json`  
+**Response-Type:** `application/json` (synchronous response)
+
+**Request Body:**
+The endpoint requires only the measured curve data. All other fields are optional and used only for frequency range overrides:
+
+```json
+{
+  "measured_curve": {
+    "frequencies": [20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000, 20000],
+    "magnitudes_db": [2.1, 3.8, 4.2, 3.1, 1.9, 0.8, -0.5, -1.2, -0.8, 0.2, 1.5, 2.8, 3.2, 2.1, 0.9, -1.2, -2.8, -3.5, -2.9, -1.8, -0.5, 1.2, 2.5, 1.8, 0.9, -0.3, -1.1, -0.8, -0.2, 0.5, 1.2]
+  },
+  "optimizer_params": {
+    "min_frequency": 50.0,
+    "max_frequency": 8000.0
+  },
+  "sample_rate": 48000
+}
+```
+
+**Required Fields:**
+- `measured_curve.frequencies`: Array of frequency values in Hz
+- `measured_curve.magnitudes_db`: Array of magnitude values in dB (same length as frequencies)
+
+**Optional Fields:**
+- `optimizer_params.min_frequency`: Override lower frequency limit (Hz)
+- `optimizer_params.max_frequency`: Override upper frequency limit (Hz)
+- `sample_rate`: Audio sample rate (default: 48000)
+
+**Example Requests:**
+```bash
+# Detect usable range without overrides
+curl -X POST "http://localhost:10315/eq/usable-range" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "measured_curve": {
+      "frequencies": [63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000],
+      "magnitudes_db": [2.1, 3.8, 4.2, 3.1, 1.9, 0.8, -0.5, -1.2, -0.8, 0.2, 1.5, 2.8, 3.2, 2.1, 0.9, -1.2, -2.8, -3.5, -2.9, -1.8, -0.5, 1.2, 2.5]
+    }
+  }'
+
+# Detect usable range with frequency overrides
+curl -X POST "http://localhost:10315/eq/usable-range" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "measured_curve": {
+      "frequencies": [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000],
+      "magnitudes_db": [-15, -10, -5, -2, 0, 1, -1, -3, -8, -15]
+    },
+    "optimizer_params": {
+      "min_frequency": 80.0,
+      "max_frequency": 6000.0
+    },
+    "sample_rate": 48000
+  }'
+```
+
+**Success Response (200):**
+```json
+{
+  "success": true,
+  "usable_frequency_range": {
+    "low_hz": 70.7,
+    "high_hz": 10000.0
+  },
+  "frequency_candidates": 26,
+  "optimization_frequencies": 23,
+  "message": "Detected usable frequency range: 70.7 Hz - 10000.0 Hz"
+}
+```
+
+**Success Response with Frequency Overrides:**
+```json
+{
+  "success": true,
+  "usable_frequency_range": {
+    "low_hz": 80.0,
+    "high_hz": 6000.0
+  },
+  "frequency_candidates": 18,
+  "optimization_frequencies": 20,
+  "message": "Frequency range overridden: 80.0 Hz - 6000.0 Hz (detected: 70.7 Hz - 10000.0 Hz)"
+}
+```
+
+**Response Fields:**
+- `success`: Operation success status
+- `usable_frequency_range.low_hz`: Lower frequency limit in Hz
+- `usable_frequency_range.high_hz`: Upper frequency limit in Hz
+- `frequency_candidates`: Number of candidate frequencies for optimization
+- `optimization_frequencies`: Total number of frequencies that will be used for optimization
+- `message`: Human-readable description of the detected or overridden range
+
+**Frequency Range Detection Algorithm:**
+The usable range detection analyzes signal levels relative to the average response:
+1. Calculates average level in the 200-8000 Hz range
+2. Identifies frequencies with levels more than 8dB below average
+3. Excludes regions with consecutive low-level frequencies
+4. Returns the largest contiguous usable frequency range
+
+**Use Cases:**
+- **Pre-optimization Analysis**: Determine frequency boundaries before running full optimization
+- **Measurement Validation**: Check if measurements cover sufficient frequency range
+- **System Limits**: Identify natural system limitations (speaker rolloff, room modes)
+- **Custom Frequency Ranges**: Override detected range for specific optimization goals
+- **Integration**: Use in automated measurement workflows for adaptive frequency targeting
+
+**Error Responses:**
+- `400 Bad Request`: Invalid input (missing measured_curve, mismatched array lengths)
+- `500 Internal Server Error`: Processing error in usable range detection
 
 ### Legacy Async API Endpoints (Deprecated)
 
