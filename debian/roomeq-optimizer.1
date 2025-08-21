@@ -102,12 +102,12 @@ Processing time: 150 ms
 .SH EXAMPLES
 .SS Basic optimization with JSON output
 .nf
-echo '{"measured_curve":...}' | roomeq-optimizer --result
+echo '{"measured_curve":...}' | roomeq-optimizer
 .fi
 
 .SS Interactive optimization with human-readable output
 .nf
-roomeq-optimizer --progress --result --human-readable < job.json
+roomeq-optimizer --progress --human-readable < job.json
 .fi
 
 .SS Progress tracking only (useful for monitoring)
