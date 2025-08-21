@@ -44,6 +44,10 @@ pub struct OptimizerPreset {
     pub add_highpass: bool,
     #[serde(default = "default_acceptable_error")]
     pub acceptable_error: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_frequency: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_frequency: Option<f64>,
 }
 
 /// Default acceptable error is 1.0 dB

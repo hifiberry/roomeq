@@ -9,10 +9,22 @@ pub struct OptimizationJob {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub measured_curve: FrequencyResponse,
-    pub target_curve: TargetCurve,
-    pub optimizer_params: OptimizerPreset,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_curve: Option<TargetCurve>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub optimizer_params: Option<OptimizerPreset>,
+    #[serde(default = "default_sample_rate")]
     pub sample_rate: f64,
+    #[serde(default = "default_filter_count")]
     pub filter_count: usize,
+}
+
+fn default_sample_rate() -> f64 {
+    48000.0
+}
+
+fn default_filter_count() -> usize {
+    5
 }
 
 /// Step output during optimization
@@ -42,6 +54,16 @@ pub struct OptimizationResult {
     pub usable_freq_high: f64,
 }
 
+/// Usable frequency range detection result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsableRangeResult {
+    pub usable_freq_low: f64,
+    pub usable_freq_high: f64,
+    pub frequency_candidates: usize,
+    pub optimization_frequencies: usize,
+    pub message: String,
+}
+
 pub struct RoomEQOptimizer {
     sample_rate: f64,
     min_frequency: f64,
@@ -60,6 +82,34 @@ impl RoomEQOptimizer {
             output_progress: true,  // Default to current behavior
             human_readable: false,  // Default to JSON output
             output_frequency_response: false,  // Default to no frequency response
+        }
+    }
+
+    /// Create default target curve (flat response from 20Hz to 20kHz)
+    fn create_default_target_curve() -> TargetCurve {
+        TargetCurve {
+            name: Some("Flat".to_string()),
+            description: Some("Default flat response target".to_string()),
+            expert: None,
+            curve: vec![
+                CurvePoint { frequency: 20.0, target_db: 0.0, weight: None },
+                CurvePoint { frequency: 20000.0, target_db: 0.0, weight: None },
+            ],
+        }
+    }
+
+    /// Create default optimizer parameters
+    fn create_default_optimizer_params() -> OptimizerPreset {
+        OptimizerPreset {
+            name: Some("Default".to_string()),
+            description: Some("Default optimization parameters".to_string()),
+            qmax: 10.0,
+            mindb: -6.0,
+            maxdb: 6.0,
+            add_highpass: false,
+            acceptable_error: 1.0,
+            min_frequency: None,
+            max_frequency: None,
         }
     }
 
@@ -542,16 +592,62 @@ impl RoomEQOptimizer {
         frequencies
     }
 
+    /// Detect usable frequency range without running full optimization
+    pub fn detect_usable_range(&self, job: OptimizationJob) -> UsableRangeResult {
+        // Generate optimization frequencies based on input data (twice as many)
+        let frequencies = self.generate_optimization_frequencies(&job.measured_curve.frequencies);
+        
+        // Interpolate measured response to optimization frequencies
+        let measured_response: Vec<f64> = frequencies.iter()
+            .map(|&freq| job.measured_curve.interpolate_at(freq))
+            .collect();
+
+        // Find usable frequency range
+        let (_low_idx, _high_idx, f_low_detected, f_high_detected) = self.find_usable_range(&frequencies, &measured_response);
+
+        // Check for frequency overrides in optimizer params
+        let (f_low, f_high) = if let Some(ref params) = job.optimizer_params {
+            let f_low = params.min_frequency.unwrap_or(f_low_detected);
+            let f_high = params.max_frequency.unwrap_or(f_high_detected);
+            (f_low, f_high)
+        } else {
+            (f_low_detected, f_high_detected)
+        };
+
+        // Calculate frequency candidates
+        let measured_freqs: Vec<f64> = job.measured_curve.frequencies.clone();
+        let frequency_candidates = self.generate_frequency_candidates(f_low, f_high, &measured_freqs);
+
+        let message = if f_low != f_low_detected || f_high != f_high_detected {
+            format!("Frequency range overridden: {:.1} Hz - {:.1} Hz (detected: {:.1} Hz - {:.1} Hz)", 
+                    f_low, f_high, f_low_detected, f_high_detected)
+        } else {
+            format!("Detected usable frequency range: {:.1} Hz - {:.1} Hz", f_low, f_high)
+        };
+
+        UsableRangeResult {
+            usable_freq_low: f_low,
+            usable_freq_high: f_high,
+            frequency_candidates: frequency_candidates.len(),
+            optimization_frequencies: frequencies.len(),
+            message,
+        }
+    }
+
     /// Optimize EQ filters using a brute-force approach with weighted error calculation
     pub fn optimize(&self, job: OptimizationJob) -> OptimizationResult {
         let start_time = std::time::Instant::now();
         let mut steps = Vec::new();
         
+        // Use provided parameters or create defaults
+        let target_curve = job.target_curve.as_ref().unwrap_or(&Self::create_default_target_curve());
+        let optimizer_params = job.optimizer_params.as_ref().unwrap_or(&Self::create_default_optimizer_params());
+        
         // Generate optimization frequencies based on input data (twice as many)
         let frequencies = self.generate_optimization_frequencies(&job.measured_curve.frequencies);
         
         // Generate target response
-        let target_response = self.generate_target_response(&job.target_curve, &frequencies);
+        let target_response = self.generate_target_response(target_curve, &frequencies);
         
         // Interpolate measured response to optimization frequencies
         let measured_response: Vec<f64> = frequencies.iter()
@@ -559,27 +655,66 @@ impl RoomEQOptimizer {
             .collect();
 
         // Find usable frequency range for adaptive high-pass placement
-        let (_low_idx, _high_idx, f_low, f_high) = self.find_usable_range(&frequencies, &measured_response);
+        let (_low_idx, _high_idx, f_low_detected, f_high_detected) = self.find_usable_range(&frequencies, &measured_response);
+
+        // Check for frequency overrides in optimizer params
+        let f_low = optimizer_params.min_frequency.unwrap_or(f_low_detected);
+        let f_high = optimizer_params.max_frequency.unwrap_or(f_high_detected);
 
         // Output usable frequency range information
         if self.output_progress {
             let measured_freqs: Vec<f64> = job.measured_curve.frequencies.clone();
-            println!("Usable frequency range: {:.1} Hz - {:.1} Hz ({} frequency candidates)", 
-                    f_low, f_high, self.generate_frequency_candidates(f_low, f_high, &measured_freqs).len());
+            let frequency_candidates = self.generate_frequency_candidates(f_low, f_high, &measured_freqs);
+            
+            if self.human_readable {
+                if f_low != f_low_detected || f_high != f_high_detected {
+                    println!("Usable frequency range overridden: {:.1} Hz - {:.1} Hz ({} candidates) - detected: {:.1} Hz - {:.1} Hz", 
+                            f_low, f_high, frequency_candidates.len(), f_low_detected, f_high_detected);
+                } else {
+                    println!("Usable frequency range: {:.1} Hz - {:.1} Hz ({} frequency candidates)", 
+                            f_low, f_high, frequency_candidates.len());
+                }
+            } else {
+                // Output JSON message for usable frequency range detection
+                let range_json = serde_json::json!({
+                    "type": "usable_frequency_range",
+                    "frequency_range": {
+                        "low_hz": f_low,
+                        "high_hz": f_high
+                    },
+                    "frequency_candidates": frequency_candidates.len(),
+                    "optimization_frequencies": frequencies.len(),
+                    "overridden": f_low != f_low_detected || f_high != f_high_detected,
+                    "detected_range": {
+                        "low_hz": f_low_detected,
+                        "high_hz": f_high_detected
+                    },
+                    "message": if f_low != f_low_detected || f_high != f_high_detected {
+                        format!("Frequency range overridden: {:.1} Hz - {:.1} Hz (detected: {:.1} Hz - {:.1} Hz)", 
+                                f_low, f_high, f_low_detected, f_high_detected)
+                    } else {
+                        format!("Detected usable frequency range: {:.1} Hz - {:.1} Hz", f_low, f_high)
+                    }
+                });
+                
+                if let Ok(json) = serde_json::to_string(&range_json) {
+                    println!("{}", json);
+                }
+            }
         }
 
         // Generate target weights for the measured vs target comparison
-        let target_weights = self.generate_target_weights(&job.target_curve, &frequencies, 
+        let target_weights = self.generate_target_weights(target_curve, &frequencies, 
                                                         &measured_response, &target_response);
 
         // Calculate original error (with acceptable error threshold)
-        let original_error = self.calculate_error_with_acceptable_threshold(&measured_response, &target_response, &target_weights, job.optimizer_params.acceptable_error);
+        let original_error = self.calculate_error_with_acceptable_threshold(&measured_response, &target_response, &target_weights, optimizer_params.acceptable_error);
         
         let mut filters = Vec::new();
         let mut current_response = measured_response.clone();
 
         // Add adaptive high-pass filter if requested (maximum one allowed)
-        if job.optimizer_params.add_highpass {
+        if optimizer_params.add_highpass {
             // Calculate high-pass frequency as half of the lowest usable frequency (like Python)
             let hp_frequency = (f_low / 2.0).max(20.0).min(120.0); // Clamp between 20-120Hz for safety
             let hp_q = 0.5; // Use lower Q like Python for gentler slope
@@ -595,9 +730,9 @@ impl RoomEQOptimizer {
             filters.push(hp_filter);
             
             // Recalculate weights for updated response
-            let updated_weights = self.generate_target_weights(&job.target_curve, &frequencies, 
+            let updated_weights = self.generate_target_weights(target_curve, &frequencies, 
                                                              &current_response, &target_response);
-            let error = self.calculate_error_with_acceptable_threshold(&current_response, &target_response, &updated_weights, job.optimizer_params.acceptable_error);
+            let error = self.calculate_error_with_acceptable_threshold(&current_response, &target_response, &updated_weights, optimizer_params.acceptable_error);
             let step = OptimizationStep {
                 step: 0,
                 filters: filters.clone(),
@@ -631,16 +766,16 @@ impl RoomEQOptimizer {
             
             let mut best_filter: Option<BiquadFilter> = None;
             // Update weights for current response before calculating error
-            let current_weights = self.generate_target_weights(&job.target_curve, &frequencies, 
+            let current_weights = self.generate_target_weights(target_curve, &frequencies, 
                                                              &current_response, &target_response);
-            let mut best_error = self.calculate_error_with_acceptable_threshold(&current_response, &target_response, &current_weights, job.optimizer_params.acceptable_error);
+            let mut best_error = self.calculate_error_with_acceptable_threshold(&current_response, &target_response, &current_weights, optimizer_params.acceptable_error);
             let mut best_response = current_response.clone();
             
             // Define search ranges - limit frequencies to usable range, add interpolated frequencies
             let measured_freqs: Vec<f64> = job.measured_curve.frequencies.clone();
             let freq_candidates: Vec<f64> = self.generate_frequency_candidates(f_low, f_high, &measured_freqs);
-            let q_candidates = self.generate_q_candidates(&job.optimizer_params);
-            let gain_candidates = self.generate_gain_candidates(&job.optimizer_params);
+            let q_candidates = self.generate_q_candidates(optimizer_params);
+            let gain_candidates = self.generate_gain_candidates(optimizer_params);
             
             // Try all combinations of frequency, Q, and gain
             for &freq in &freq_candidates {
@@ -669,9 +804,9 @@ impl RoomEQOptimizer {
                         }
                         
                         // Calculate weights for the test response and check error
-                        let test_weights = self.generate_target_weights(&job.target_curve, &frequencies, 
+                        let test_weights = self.generate_target_weights(target_curve, &frequencies, 
                                                                       &test_response, &target_response);
-                        let test_error = self.calculate_error_with_acceptable_threshold(&test_response, &target_response, &test_weights, job.optimizer_params.acceptable_error);
+                        let test_error = self.calculate_error_with_acceptable_threshold(&test_response, &target_response, &test_weights, optimizer_params.acceptable_error);
                         
                         if test_error < best_error {
                             best_error = test_error;
@@ -719,9 +854,9 @@ impl RoomEQOptimizer {
         }
 
         // Calculate final weighted error
-        let final_weights = self.generate_target_weights(&job.target_curve, &frequencies, 
+        let final_weights = self.generate_target_weights(target_curve, &frequencies, 
                                                        &current_response, &target_response);
-        let final_error = self.calculate_error_with_acceptable_threshold(&current_response, &target_response, &final_weights, job.optimizer_params.acceptable_error);
+        let final_error = self.calculate_error_with_acceptable_threshold(&current_response, &target_response, &final_weights, optimizer_params.acceptable_error);
         let improvement_db = 20.0 * (original_error / final_error.max(1e-10)).log10();
         let processing_time = start_time.elapsed().as_millis() as u64;
 

@@ -26,6 +26,10 @@ struct Args {
     /// Output frequency response after each filter step
     #[arg(long)]
     frequency_response: bool,
+
+    /// Only detect and output the usable frequency range, then exit
+    #[arg(long)]
+    usable_range_only: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -63,8 +67,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.human_readable {
         info!("Optimization job received:");
         info!("  Measured curve: {} points", job.measured_curve.len());
-        info!("  Target curve: {}", job.target_curve.name.as_deref().unwrap_or("Unnamed"));
-        info!("  Optimizer: {}", job.optimizer_params.name.as_deref().unwrap_or("Default"));
+        if let Some(ref target) = job.target_curve {
+            info!("  Target curve: {}", target.name.as_deref().unwrap_or("Unnamed"));
+        } else {
+            info!("  Target curve: None (usable range detection only)");
+        }
+        if let Some(ref params) = job.optimizer_params {
+            info!("  Optimizer: {}", params.name.as_deref().unwrap_or("Default"));
+        } else {
+            info!("  Optimizer: Default parameters");
+        }
         info!("  Filter count: {}", job.filter_count);
         info!("  Sample rate: {}Hz", job.sample_rate);
     }
@@ -72,6 +84,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create optimizer with output mode configuration
     let mut optimizer = RoomEQOptimizer::new(job.sample_rate);
     optimizer.set_output_mode(args.progress, args.human_readable, args.frequency_response);
+
+    // Handle usable range only mode
+    if args.usable_range_only {
+        let usable_range_result = optimizer.detect_usable_range(job);
+        
+        if args.human_readable {
+            println!("Usable frequency range: {:.1} Hz - {:.1} Hz", 
+                    usable_range_result.usable_freq_low, usable_range_result.usable_freq_high);
+            println!("Frequency candidates: {}", usable_range_result.frequency_candidates);
+            println!("Optimization frequencies: {}", usable_range_result.optimization_frequencies);
+        } else {
+            let result_json = serde_json::to_string(&usable_range_result)?;
+            println!("{}", result_json);
+        }
+        
+        std::process::exit(0);
+    }
 
     // Run optimization
     let result = optimizer.optimize(job);
