@@ -66,11 +66,8 @@ TARGET_CURVES = {
         "description": "Corrects only room-specific issues, preserves speaker character",
         "expert": True,
         "curve": [
-            {"frequency": 20.0, "target_db": 0.0, "weight": 0.3},
+            {"frequency": 20.0, "target_db": 0.0, "weight": 1},
             {"frequency": 200.0, "target_db": 0.0, "weight": 1.0},
-            {"frequency": 2000.0, "target_db": 0.0, "weight": 1.0},
-            {"frequency": 8000.0, "target_db": 0.0, "weight": 0.2},
-            {"frequency": 20000.0, "target_db": 0.0, "weight": 0.1}
         ]
     },
     
