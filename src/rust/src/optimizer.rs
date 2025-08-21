@@ -9,22 +9,10 @@ pub struct OptimizationJob {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub measured_curve: FrequencyResponse,
-    pub target_curve: TargetCurveData,
+    pub target_curve: TargetCurve,
     pub optimizer_params: OptimizerPreset,
     pub sample_rate: f64,
     pub filter_count: usize,
-}
-
-/// Target curve data with points
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TargetCurveData {
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub expert: bool,
-    pub frequencies: Vec<f64>,
-    pub magnitudes_db: Vec<f64>,
 }
 
 /// Step output during optimization
@@ -269,7 +257,7 @@ impl RoomEQOptimizer {
     }
 
     /// Generate target response from curve definition
-    pub fn generate_target_response(&self, target_curve: &TargetCurveData, frequencies: &[f64]) -> Vec<f64> {
+    pub fn generate_target_response(&self, target_curve: &TargetCurve, frequencies: &[f64]) -> Vec<f64> {
         let mut target_response = Vec::with_capacity(frequencies.len());
 
         for &freq in frequencies {
@@ -280,48 +268,60 @@ impl RoomEQOptimizer {
         target_response
     }
 
-    fn interpolate_target_curve(&self, target_curve: &TargetCurveData, frequency: f64) -> f64 {
-        let frequencies = &target_curve.frequencies;
-        let magnitudes_db = &target_curve.magnitudes_db;
+    fn interpolate_target_curve(&self, target_curve: &TargetCurve, frequency: f64) -> f64 {
+        let curve_points = &target_curve.curve;
         
-        if frequencies.is_empty() {
+        if curve_points.is_empty() {
             return 0.0;
         }
 
-        if frequency <= frequencies[0] {
-            return magnitudes_db[0];
+        if frequency <= curve_points[0].frequency {
+            return curve_points[0].target_db;
         }
 
-        if frequency >= frequencies[frequencies.len() - 1] {
-            return magnitudes_db[magnitudes_db.len() - 1];
+        if frequency >= curve_points[curve_points.len() - 1].frequency {
+            return curve_points[curve_points.len() - 1].target_db;
         }
 
         // Find the two points to interpolate between
         let mut i = 0;
-        while i < frequencies.len() - 1 && frequencies[i + 1] < frequency {
+        while i < curve_points.len() - 1 && curve_points[i + 1].frequency < frequency {
             i += 1;
         }
 
-        let f1 = frequencies[i];
-        let f2 = frequencies[i + 1];
-        let m1 = magnitudes_db[i];
-        let m2 = magnitudes_db[i + 1];
-
+        let p1 = &curve_points[i];
+        let p2 = &curve_points[i + 1];
+        
         // Linear interpolation in log-frequency space
         let log_f = frequency.ln();
-        let log_f1 = f1.ln();
-        let log_f2 = f2.ln();
+        let log_f1 = p1.frequency.ln();
+        let log_f2 = p2.frequency.ln();
         
         let t = (log_f - log_f1) / (log_f2 - log_f1);
-        m1 + t * (m2 - m1)
+        p1.target_db + t * (p2.target_db - p1.target_db)
     }
 
     /// Interpolate weight for a given frequency from target curve
-    fn interpolate_weight(&self, target_curve: &TargetCurveData, frequency: f64, error_sign: f64) -> f64 {
-        // Simplified weight calculation since the arrays format doesn't include weight data
-        // Return a default weight of 1.0 for all frequencies
-        // TODO: If needed, add weight arrays to TargetCurveData in the future
-        1.0
+    fn interpolate_weight(&self, target_curve: &TargetCurve, frequency: f64, error_sign: f64) -> f64 {
+        let curve_points = &target_curve.curve;
+        
+        if curve_points.is_empty() {
+            return 1.0;
+        }
+
+        // Find the closest curve points for interpolation
+        let mut closest_weight: Option<f64> = None;
+        let mut min_distance = f64::INFINITY;
+
+        for point in curve_points {
+            let distance = (frequency - point.frequency).abs();
+            if distance < min_distance {
+                min_distance = distance;
+                closest_weight = Some(self.extract_weight_value(&point.weight, error_sign));
+            }
+        }
+
+        closest_weight.unwrap_or(1.0)
     }
 
     /// Extract weight value considering asymmetric weights (positive vs negative errors)
@@ -339,7 +339,7 @@ impl RoomEQOptimizer {
     }
 
     /// Generate target weights for optimization frequencies
-    pub fn generate_target_weights(&self, target_curve: &TargetCurveData, frequencies: &[f64], 
+    pub fn generate_target_weights(&self, target_curve: &TargetCurve, frequencies: &[f64], 
                                  measured: &[f64], target: &[f64]) -> Vec<f64> {
         let mut weights = Vec::with_capacity(frequencies.len());
 

@@ -23,7 +23,8 @@
     "qmax": 10.0,
     "mindb": -10.0,
     "maxdb": 3.0,
-    "add_highpass": true
+    "add_highpass": true,
+    "acceptable_error": 1.0
   },
   "sample_rate": 48000.0,
   "filter_count": 16
