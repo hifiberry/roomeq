@@ -28,13 +28,6 @@
     - [POST `/audio/play/file`](#post-audioplayfile)
     - [POST `/audio/play/stop`](#post-audioplaystop)
     - [GET `/audio/play/status`](#get-audioplaystatus)
-  - [Legacy Signal Generation (Deprecated)](#legacy-signal-generation-deprecated)
-    - [POST `/audio/noise/start`](#post-audionoisestart)
-    - [POST `/audio/noise/keep-playing`](#post-audionoisekeep-playing)
-    - [POST `/audio/noise/stop`](#post-audionoisestop)
-    - [GET `/audio/noise/status`](#get-audionoisestatus)
-  - [Sine Sweep Generation](#sine-sweep-generation)
-    - [POST `/audio/sweep/start`](#post-audiosweepstart)
 - [FFT Analysis](#fft-analysis)
   - [POST `/audio/analyze/fft`](#audioanalyzefft-post)
   - [FFT Analysis Technical Details](#fft-analysis-technical-details)
@@ -49,14 +42,6 @@
   - [EQ Optimization Process](#eq-optimization-process)
     - [POST `/eq/optimize`](#post-eqoptimize)
     - [POST `/eq/usable-range`](#post-equsable-range)
-  - [Legacy Async API Endpoints (Deprecated)](#legacy-async-api-endpoints-deprecated)
-    - [GET `/eq/optimize/status/<optimization_id>`](#get-eqoptimizestatusoptimization_id)
-    - [POST `/eq/optimize/cancel/<optimization_id>`](#post-eqoptimizecanceloptimization_id)
-    - [GET `/eq/optimize/result/<optimization_id>`](#get-eqoptimizeresultoptimization_id)
-  - [EQ Optimization Usage Examples](#eq-optimization-usage-examples)
-    - [Complete Room Correction Workflow](#complete-room-correction-workflow)
-    - [Quick Optimization from Existing FFT Data](#quick-optimization-from-existing-fft-data)
-    - [Monitor Multiple Optimizations](#monitor-multiple-optimizations)
 - [Audio Recording](#audio-recording)
   - [Background Recording to WAV Files](#background-recording-to-wav-files)
     - [POST `/audio/record/start`](#post-audiorecordstart)
@@ -67,7 +52,7 @@
     - [DELETE `/audio/record/delete-file/<filename>`](#delete-audiorecorddelete-filefilename)
 - [Usage Examples](#usage-examples)
   - [Basic SPL Measurement](#basic-spl-measurement)
-  - [Noise Generation with Keep-Alive](#noise-generation-with-keep-alive)
+  
   - [Sine Sweep Generation](#sine-sweep-generation-1)
   - [Audio Recording Workflow](#audio-recording-workflow)
   - [FFT Analysis Examples](#fft-analysis-examples)
@@ -125,12 +110,7 @@ Get API information and endpoint overview.
       "/audio/generate/noise": "Generate noise file",
       "/audio/play/file": "Play audio file",
       "/audio/play/stop": "Stop audio playback",
-      "/audio/play/status": "Playback status",
-      "/audio/noise/start": "White noise playback (deprecated)",
-      "/audio/noise/keep-playing": "Extend playback (deprecated)", 
-      "/audio/noise/stop": "Stop playback (deprecated)",
-      "/audio/noise/status": "Playback status (deprecated)",
-      "/audio/sweep/start": "Sine sweep generation (deprecated)"
+      "/audio/play/status": "Playback status"
     },
     "fft_analysis": {
       "/audio/analyze/fft": "FFT analysis of WAV files",
@@ -583,287 +563,7 @@ curl -X GET http://localhost:10315/audio/play/status
 
 For legacy signal types (noise/sine_sweep), additional fields may be included for backward compatibility.
 
-### Legacy Signal Generation (Deprecated)
-
-**Note:** The following endpoints are deprecated in favor of the separate generator and player APIs above. They are maintained for backward compatibility but may be removed in future versions.
-
-#### POST `/audio/noise/start`
-Start white noise playback with automatic timeout.
-
-**DEPRECATED:** Use `/audio/generate/noise` + `/audio/play/file` for better separation of concerns.
-
-**Query Parameters:**
-- `duration` (optional): Initial playback duration in seconds (1.0-30.0, default: 3.0)
-- `amplitude` (optional): Amplitude level (0.0-1.0, default: 0.5)
-- `device` (optional): Output device (e.g., "hw:0,0"). Uses default if not specified
-
-**Example Requests:**
-```bash
-# Basic noise generation
-curl -X POST http://localhost:10315/audio/noise/start
-
-# Custom duration and amplitude
-curl -X POST "http://localhost:10315/audio/noise/start?duration=5&amplitude=0.3"
-
-# Specific output device
-curl -X POST "http://localhost:10315/audio/noise/start?duration=10&amplitude=0.4&device=hw:0,0"
-```
-
-**Response:**
-```json
-{
-  "status": "started",
-  "duration": 5.0,
-  "amplitude": 0.3,
-  "device": "hw:0,0",
-  "filename": "noise_a1b2c3d4-e5f6-7890-abcd-ef1234567890.wav",
-  "stop_time": "2025-08-18T15:30:45.123456",
-  "message": "Noise playback started for 5.0 seconds"
-}
-```
-
-#### POST `/audio/noise/keep-playing`
-Extend current noise playback duration (keep-alive mechanism).
-
-**DEPRECATED:** Use `/audio/play/stop` and `/audio/play/file` for better control.
-
-**Query Parameters:**
-- `duration` (optional): Additional duration in seconds (1.0-30.0, default: 3.0)
-
-**Example Requests:**
-```bash
-# Extend by default 3 seconds
-curl -X POST http://localhost:10315/audio/noise/keep-playing
-
-# Extend by specific duration
-curl -X POST "http://localhost:10315/audio/noise/keep-playing?duration=5"
-```
-
-**Response:**
-```json
-{
-  "status": "extended",
-  "duration": 3.0,
-  "new_stop_time": "2025-08-14T15:30:48.123456",
-  "message": "Playback extended by 3.0 seconds"
-}
-```
-
-**Error Response (no active playback):**
-```json
-{
-  "detail": "No active noise playback to extend"
-}
-```
-
-#### POST `/audio/noise/stop`
-Stop current noise playback immediately.
-
-**DEPRECATED:** Use `/audio/play/stop` for unified playback control.
-
-**Example Request:**
-```bash
-curl -X POST http://localhost:10315/audio/noise/stop
-```
-
-**Response:**
-```json
-{
-  "status": "stopped",
-  "message": "Noise playback stopped"
-}
-```
-
-**Response (no active playback):**
-```json
-{
-  "status": "not_active",
-  "message": "No active noise playback to stop"
-}
-```
-
-#### GET `/audio/noise/status`
-Get current noise playback status.
-
-**DEPRECATED:** Use `/audio/play/status` for unified playback status.
-
-**Query Parameters:**
-- `duration` (optional): Initial playback duration in seconds (1.0-30.0, default: 3.0)
-- `amplitude` (optional): Amplitude level (0.0-1.0, default: 0.5)
-- `device` (optional): Output device (e.g., "hw:0,0"). Uses default if not specified
-
-**Example Requests:**
-```bash
-# Basic noise generation
-curl -X POST http://localhost:10315/audio/noise/start
-
-# Custom duration and amplitude
-curl -X POST "http://localhost:10315/audio/noise/start?duration=5&amplitude=0.3"
-
-# Specific output device
-curl -X POST "http://localhost:10315/audio/noise/start?duration=10&amplitude=0.4&device=hw:0,0"
-```
-
-**Response:**
-```json
-{
-  "status": "started",
-  "duration": 5.0,
-  "amplitude": 0.3,
-  "device": "hw:0,0",
-  "filename": "noise_a1b2c3d4-e5f6-7890-abcd-ef1234567890.wav",
-  "stop_time": "2025-08-18T15:30:45.123456",
-  "message": "Noise playback started for 5.0 seconds"
-}
-```
-
-#### POST `/audio/noise/keep-playing`
-Extend current noise playback duration (keep-alive mechanism).
-
-**Query Parameters:**
-- `duration` (optional): Additional duration in seconds (1.0-30.0, default: 3.0)
-
-**Example Requests:**
-```bash
-# Extend by default 3 seconds
-curl -X POST http://localhost:10315/audio/noise/keep-playing
-
-# Extend by specific duration
-curl -X POST "http://localhost:10315/audio/noise/keep-playing?duration=5"
-```
-
-**Response:**
-```json
-{
-  "status": "extended",
-  "duration": 3.0,
-  "new_stop_time": "2025-08-14T15:30:48.123456",
-  "message": "Playback extended by 3.0 seconds"
-}
-```
-
-**Error Response (no active playback):**
-```json
-{
-  "detail": "No active noise playback to extend"
-}
-```
-
-#### POST `/audio/noise/stop`
-Stop current noise playback immediately.
-
-**Example Request:**
-```bash
-curl -X POST http://localhost:10315/audio/noise/stop
-```
-
-**Response:**
-```json
-{
-  "status": "stopped",
-  "message": "Noise playback stopped"
-}
-```
-
-**Response (no active playback):**
-```json
-{
-  "status": "not_active",
-  "message": "No active noise playback to stop"
-}
-```
-
-#### GET `/audio/noise/status`
-Get current noise playback status.
-
-**Example Request:**
-```bash
-curl -X GET http://localhost:10315/audio/noise/status
-```
-
-**Response:**
-```json
-{
-  "active": true,
-  "amplitude": 0.5,
-  "device": "default",
-  "filename": "noise_a1b2c3d4-e5f6-7890-abcd-ef1234567890.wav",
-  "remaining_seconds": 2.3,
-  "stop_time": "2025-08-14T15:30:45.123456"
-}
-```
-
-**Response Fields:**
-- `active`: Whether audio is currently playing
-- `signal_type`: Type of signal being played ("noise" or "sine_sweep")
-- `amplitude`: Current playback amplitude
-- `device`: Output device being used
-- `remaining_seconds`: Seconds until automatic stop
-- `stop_time`: ISO timestamp when playback will stop
-
-For sine sweeps, additional fields are included:
-- `start_freq`: Starting frequency in Hz
-- `end_freq`: Ending frequency in Hz
-- `sweeps`: Number of consecutive sweeps
-- `sweep_duration`: Duration per sweep in seconds
-- `total_duration`: Total duration of all sweeps
-- `compensation_mode`: Amplitude compensation for sweep generation (`"none" | "inv_sqrt_f" | "sqrt_f"`, default `"none"`)
-
-
-### Sine Sweep Generation
-
-#### POST `/audio/sweep/start`
-Start logarithmic sine sweep(s) with optional multiple repeat support.
-
-**Query Parameters:**
-- `start_freq` (optional): Starting frequency in Hz (10-22000, default: 20)
-- `end_freq` (optional): Ending frequency in Hz (10-22000, default: 20000)
-- `duration` (optional): Duration per sweep in seconds (1.0-30.0, default: 5.0)
-- `sweeps` (optional): Number of consecutive sweeps (1-10, default: 1)
-- `amplitude` (optional): Amplitude level (0.0-1.0, default: 0.5)
-- `compensation_mode` (optional): Amplitude compensation envelope (`none | inv_sqrt_f | sqrt_f`, default: `none`)
-- `device` (optional): Output device (e.g., "hw:0,0"). Uses default if not specified
-
-**Example Requests:**
-```bash
-# Single sweep - full spectrum, 10 seconds
-POST /audio/sweep/start?start_freq=20&end_freq=20000&duration=10&amplitude=0.4
-
-# Multiple sweeps for averaging - 3 consecutive sweeps
-POST /audio/sweep/start?start_freq=100&end_freq=8000&duration=5&sweeps=3&amplitude=0.3
-
-# Extended frequency range with compensation
-POST /audio/sweep/start?start_freq=10&end_freq=22000&duration=8&sweeps=2&amplitude=0.3&compensation_mode=inv_sqrt_f
-```
-
-**Response:**
-```json
-{
-  "status": "started",
-  "signal_type": "sine_sweep",
-  "start_freq": 100.0,
-  "end_freq": 8000.0,
-  "duration": 5.0,
-  "sweeps": 3,
-  "total_duration": 15.0,
-  "amplitude": 0.3,
-  "compensation_mode": "sqrt_f",
-  "device": "default",
-  "filename": "roomeq_sweep_abc123def456.wav",
-  "stop_time": "2025-08-15T12:30:45.123456",
-  "message": "3 sine sweep(s) started: 100.0 Hz → 8000.0 Hz, 5.0s each (total: 15.0s)"
-}
-```
-
-**Behavior Notes:**
-- The API uses the native Python logarithmic sine sweep generator with precise frequency control and optimized sweep generation
-- The `compensation_mode` parameter allows frequency-dependent amplitude scaling for better signal-to-noise ratio across the spectrum
-
-**Use Cases:**
-- **Room Response Analysis**: Full spectrum sweeps (20 Hz - 20 kHz)
-- **Speaker Testing**: Focused frequency ranges
-- **Acoustic Averaging**: Multiple sweeps for noise reduction
-- **Automated Measurements**: Scripted measurement sequences
+  
 
 ## FFT Analysis
 
@@ -1738,197 +1438,7 @@ The usable range detection analyzes signal levels relative to the average respon
 - `400 Bad Request`: Invalid input (missing measured_curve, mismatched array lengths)
 - `500 Internal Server Error`: Processing error in usable range detection
 
-### Legacy Async API Endpoints (Deprecated)
-
-The following endpoints are deprecated in favor of the streaming API above:
-
-#### GET `/eq/optimize/status/<optimization_id>`
-Get real-time optimization progress with detailed step information.
-
-**Example Request:**
-```bash
-curl -X GET http://localhost:10315/eq/optimize/status/opt_20250818_143025_xyz789
-```
-
-**Response (In Progress):**
-```json
-{
-  "optimization_id": "opt_20250818_143025_xyz789",
-  "status": "optimizing", 
-  "progress": 65.0,
-  "current_step": "Optimizing filter 5/8",
-  "steps_completed": 13,
-  "total_steps": 20,
-  "elapsed_time": 9.2,
-  "estimated_remaining": 5.1,
-  "current_filter": {
-    "index": 5,
-    "frequency": 2500.0,
-    "gain_db": -3.8,
-    "q": 2.1,
-    "filter_type": "peaking_eq"
-  },
-  "intermediate_rms_error": 3.7,
-  "target_rms_error": 2.0
-}
-```
-
-**Response (Completed):**
-```json
-{
-  "optimization_id": "opt_20250818_143025_xyz789", 
-  "status": "completed",
-  "progress": 100.0,
-  "current_step": "Optimization completed",
-  "steps_completed": 20,
-  "total_steps": 20,
-  "elapsed_time": 14.8,
-  "final_rms_error": 1.9,
-  "improvement_db": 8.3,
-  "message": "EQ optimization completed successfully with 8 filters"
-}
-```
-
-#### POST `/eq/optimize/cancel/<optimization_id>`
-Cancel a running optimization process.
-
-**Example Request:**
-```bash
-curl -X POST http://localhost:10315/eq/optimize/cancel/opt_20250818_143025_xyz789
-```
-
-**Response:**
-```json
-{
-  "status": "cancelled",
-  "optimization_id": "opt_20250818_143025_xyz789",
-  "message": "Optimization cancelled successfully"
-}
-```
-
-#### GET `/eq/optimize/result/<optimization_id>`
-Get complete optimization results including generated EQ filters.
-
-**Example Request:**
-```bash
-curl -X GET http://localhost:10315/eq/optimize/result/opt_20250818_143025_xyz789
-```
-
-**Response:**
-```json
-{
-  "optimization_id": "opt_20250818_143025_xyz789",
-  "status": "completed",
-  "success": true,
-  "target_curve": "weighted_flat",
-  "optimizer_preset": "default",
-  "processing_time": 14.8,
-  "final_rms_error": 1.9,
-  "improvement_db": 8.3,
-  "filters": [
-    {
-      "index": 1,
-      "filter_type": "peaking_eq",
-      "frequency": 120.0,
-      "q": 1.5,
-      "gain_db": 4.2,
-      "description": "Peaking EQ 120Hz 4.2dB",
-      "text_format": "eq:120:1.5:4.2",
-      "coefficients": {
-        "b": [1.051, -1.894, 0.851],
-        "a": [1.000, -1.894, 0.902]
-      }
-    },
-    {
-      "index": 2, 
-      "filter_type": "peaking_eq",
-      "frequency": 315.0,
-      "q": 2.1,
-      "gain_db": -2.8,
-      "description": "Peaking EQ 315Hz -2.8dB",
-      "text_format": "eq:315:2.1:-2.8",
-      "coefficients": {
-        "b": [0.945, -1.823, 0.883],
-        "a": [1.000, -1.823, 0.828]
-      }
-    },
-    {
-      "index": 3,
-      "filter_type": "peaking_eq", 
-      "frequency": 2500.0,
-      "q": 2.8,
-      "gain_db": -3.8,
-      "description": "Peaking EQ 2500Hz -3.8dB",
-      "text_format": "eq:2500:2.8:-3.8",
-      "coefficients": {
-        "b": [0.932, -1.687, 0.756],
-        "a": [1.000, -1.687, 0.688]
-      }
-    }
-  ],
-  "frequency_response": {
-    "frequencies": [20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400],
-    "original_response": [-8.2, -7.1, -5.9, -4.8, -3.5, -2.1, -0.8, 1.2, 2.8, 3.5, 2.9, 1.8, 0.5, -1.2],
-    "corrected_response": [-0.8, -0.5, -0.2, 0.1, 0.3, 0.2, -0.1, -0.3, -0.1, 0.2, 0.4, 0.1, -0.2, -0.4],
-    "target_response": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-  },
-  "intermediate_results": [
-    {
-      "step": 2,
-      "filters": [
-        {
-          "filter_type": "high_pass",
-          "frequency": 60.0,
-          "q": 0.5,
-          "gain_db": 0.0
-        },
-        {
-          "filter_type": "peaking_eq",
-          "frequency": 120.0,
-          "q": 1.5,
-          "gain_db": 4.2
-        }
-      ],
-      "improvement_db": 3.2,
-      "rms_error": 5.1
-    },
-    {
-      "step": 4,
-      "filters": [
-        {
-          "filter_type": "high_pass",
-          "frequency": 60.0,
-          "q": 0.5,
-          "gain_db": 0.0
-        },
-        {
-          "filter_type": "peaking_eq",
-          "frequency": 120.0,
-          "q": 1.5,
-          "gain_db": 4.2
-        },
-        {
-          "filter_type": "peaking_eq",
-          "frequency": 315.0,
-          "q": 2.1,
-          "gain_db": -2.8
-        },
-        {
-          "filter_type": "peaking_eq",
-          "frequency": 2500.0,
-          "q": 2.8,
-          "gain_db": -3.8
-        }
-      ],
-      "improvement_db": 6.8,
-      "rms_error": 3.5
-    }
-  ],
-  "timestamp": "2025-08-18T14:30:40.123456"
-}
-```
-
-**Note:** The `intermediate_results` array is only included when `intermediate_results_interval > 0` was specified during optimization start. Each intermediate result shows the optimization state after every n filters, allowing for progress monitoring and early termination if desired performance is reached.
+  
 ```
 
 ### EQ Optimization Usage Examples
@@ -1948,11 +1458,25 @@ RECORD_RESPONSE=$(curl -s -X POST "$API_URL/audio/record/start?duration=45&sampl
 RECORDING_ID=$(echo "$RECORD_RESPONSE" | jq -r '.recording_id')
 echo "   Recording ID: $RECORDING_ID"
 
-# 2. Generate sine sweeps for room analysis
+# 2. Generate sine sweep file and play it once (file already contains 3 sweeps)
 sleep 2
-echo "2. Generating sine sweeps..."
-curl -s -X POST "$API_URL/audio/sweep/start?start_freq=20&end_freq=20000&duration=12&sweeps=3&amplitude=0.4" > /dev/null
-echo "   3 sweeps × 12s = 36 seconds total"
+echo "2. Generating sine sweep file..."
+SWEEP_JSON=$(curl -s -X POST "$API_URL/audio/generate/sweep?start_freq=20&end_freq=20000&duration=12&sweeps=3&amplitude=0.4")
+SWEEP_FILE=$(echo "$SWEEP_JSON" | jq -r '.filename')
+echo "   Generated: $SWEEP_FILE (3 sweeps × 12s = 36s total)"
+
+echo "   Playing sweep file..."
+curl -s -X POST "$API_URL/audio/play/file?filename=$SWEEP_FILE&repeats=1" > /dev/null
+
+# Optionally wait for playback to finish (poll status)
+while true; do
+  PLAY_STATUS=$(curl -s "$API_URL/audio/play/status")
+  ACTIVE=$(echo "$PLAY_STATUS" | jq -r '.active')
+  if [ "$ACTIVE" = "false" ]; then
+    break
+  fi
+  sleep 1
+done
 
 # 3. Wait for recording to complete
 echo "3. Waiting for recording to complete..."
@@ -1966,118 +1490,37 @@ while true; do
     sleep 2
 done
 
-# 4. Start EQ optimization 
-echo "4. Starting EQ optimization..."
-OPT_RESPONSE=$(curl -s -X POST "$API_URL/eq/optimize" \
+# 4. Start EQ optimization (SSE stream)
+echo "4. Starting EQ optimization (streaming)..."
+curl -N -s -X POST "$API_URL/eq/optimize" \
   -H "Content-Type: application/json" \
-  -d "{
-    \"recording_id\": \"$RECORDING_ID\",
-    \"target_curve\": \"weighted_flat\", 
-    \"optimizer_preset\": \"default\",
-    \"filter_count\": 8,
-    \"points_per_octave\": 12
-  }")
-
-OPT_ID=$(echo "$OPT_RESPONSE" | jq -r '.optimization_id')
-echo "   Optimization ID: $OPT_ID"
-
-# 5. Monitor optimization progress
-echo "5. Monitoring optimization progress..."
-while true; do
-    OPT_STATUS=$(curl -s "$API_URL/eq/optimize/status/$OPT_ID")
-    STATUS=$(echo "$OPT_STATUS" | jq -r '.status')
-    PROGRESS=$(echo "$OPT_STATUS" | jq -r '.progress')
-    CURRENT_STEP=$(echo "$OPT_STATUS" | jq -r '.current_step')
-    
-    echo "   Progress: ${PROGRESS}% - $CURRENT_STEP"
-    
-    if [ "$STATUS" = "completed" ]; then
-        echo "   Optimization completed!"
-        break
-    elif [ "$STATUS" = "error" ]; then
-        echo "   Optimization failed!"
-        exit 1
-    fi
-    sleep 2
-done
-
-# 6. Get final results
-echo "6. Retrieving optimization results..."
-RESULT=$(curl -s "$API_URL/eq/optimize/result/$OPT_ID")
-
-# Extract key metrics
-FILTER_COUNT=$(echo "$RESULT" | jq '.filters | length')
-IMPROVEMENT=$(echo "$RESULT" | jq -r '.improvement_db')
-RMS_ERROR=$(echo "$RESULT" | jq -r '.final_rms_error')
-
-echo "=== Optimization Results ==="
-echo "Filters generated: $FILTER_COUNT"
-echo "Improvement: ${IMPROVEMENT} dB"
-echo "Final RMS error: ${RMS_ERROR} dB"
-
-# 7. Save results and show filters
-echo "$RESULT" > "eq_optimization_result_${OPT_ID}.json"
-echo "Full results saved to: eq_optimization_result_${OPT_ID}.json"
+  -d "{\"recording_id\": \"$RECORDING_ID\", \"target_curve\": \"weighted_flat\", \"optimizer_preset\": \"default\", \"filter_count\": 8, \"points_per_octave\": 12 }" \
+  | tee optimization_stream.jsonl
 
 echo ""
-echo "=== Generated EQ Filters ==="
-echo "$RESULT" | jq -r '.filters[] | "Filter \(.index): \(.filter_type) \(.frequency)Hz Q=\(.q) \(.gain_db)dB"'
-
-echo ""
-echo "=== Text Format (for import into EQ software) ==="
-echo "$RESULT" | jq -r '.filters[].text_format'
-
-echo ""
-echo "Room correction workflow completed successfully!"
+echo "Stream saved to optimization_stream.jsonl (one JSON object per line)."
+echo "Filter lines and the final result can be extracted from the stream with jq."
+echo "Room correction workflow completed."
 ```
 
 #### Quick Optimization from Existing FFT Data
 ```bash
-# Optimize using pre-analyzed frequency response data
-curl -X POST http://localhost:10315/eq/optimize \
+# Optimize using pre-analyzed frequency response data (streams progress)
+curl -N -X POST http://localhost:10315/eq/optimize \
   -H "Content-Type: application/json" \
   -d '{
-    "frequencies": [63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
-    "magnitudes": [3.2, 4.1, 2.8, 1.2, 0.0, -2.1, -3.8, -2.5, -1.2],
+    "measured_curve": {
+      "frequencies": [63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+      "magnitudes_db": [3.2, 4.1, 2.8, 1.2, 0.0, -2.1, -3.8, -2.5, -1.2]
+    },
     "target_curve": "harman",
     "optimizer_preset": "smooth",
     "filter_count": 5,
     "sample_rate": 48000
-  }' | jq '.optimization_id'
+  }'
 ```
 
-#### Monitor Multiple Optimizations
-```bash
-#!/bin/bash
-# Monitor multiple optimization jobs
-
-API_URL="http://localhost:10315"
-OPT_IDS=("opt_id_1" "opt_id_2" "opt_id_3")
-
-while true; do
-    ALL_COMPLETE=true
-    
-    for OPT_ID in "${OPT_IDS[@]}"; do
-        STATUS_RESPONSE=$(curl -s "$API_URL/eq/optimize/status/$OPT_ID")
-        STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.status')
-        PROGRESS=$(echo "$STATUS_RESPONSE" | jq -r '.progress')
-        
-        if [ "$STATUS" != "completed" ] && [ "$STATUS" != "error" ]; then
-            ALL_COMPLETE=false
-            echo "$OPT_ID: ${PROGRESS}% ($STATUS)"
-        else
-            echo "$OPT_ID: $STATUS"
-        fi
-    done
-    
-    if [ "$ALL_COMPLETE" = true ]; then
-        echo "All optimizations completed!"
-        break
-    fi
-    
-    sleep 3
-done
-```
+<!-- Removed deprecated async optimization polling example -->
 
 ## Audio Recording
 
@@ -2238,37 +1681,46 @@ SPL=$(curl -s http://localhost:10315/spl/measure | jq -r '.spl_db')
 echo "Current SPL: ${SPL} dB"
 ```
 
-### Noise Generation with Keep-Alive
+### Noise Generation and Playback
 ```bash
-# Start noise playback for 3 seconds
-curl -X POST "http://localhost:10315/audio/noise/start?duration=3&amplitude=0.5"
+# Generate a 3-second white noise file at 50% amplitude
+NOISE_JSON=$(curl -s -X POST "http://localhost:10315/audio/generate/noise?duration=3&amplitude=0.5")
+NOISE_FILE=$(echo "$NOISE_JSON" | jq -r '.filename')
 
-# Extend playback by another 3 seconds (call before current duration expires)
-curl -X POST "http://localhost:10315/audio/noise/keep-playing?duration=3"
+# Play the generated file (repeat 2 times)
+curl -X POST "http://localhost:10315/audio/play/file?filename=$NOISE_FILE&repeats=2"
 
-# Check status
-curl -X GET http://localhost:10315/audio/noise/status
+# Check playback status
+curl -X GET http://localhost:10315/audio/play/status
 
 # Stop playback manually
-curl -X POST http://localhost:10315/audio/noise/stop
+curl -X POST http://localhost:10315/audio/play/stop
 ```
 
-### Sine Sweep Generation
+### Sine Sweep Generation and Playback
 ```bash
 # Single full-spectrum sweep for room analysis
-curl -X POST "http://localhost:10315/audio/sweep/start?start_freq=20&end_freq=20000&duration=10&amplitude=0.4"
+SWEEP=$(curl -s -X POST "http://localhost:10315/audio/generate/sweep?start_freq=20&end_freq=20000&duration=10&amplitude=0.4")
+FILE=$(echo "$SWEEP" | jq -r '.filename')
+curl -X POST "http://localhost:10315/audio/play/file?filename=$FILE"
 
 # Multiple sweeps for acoustic averaging
-curl -X POST "http://localhost:10315/audio/sweep/start?start_freq=100&end_freq=8000&duration=5&sweeps=3&amplitude=0.3"
+SWEEP=$(curl -s -X POST "http://localhost:10315/audio/generate/sweep?start_freq=100&end_freq=8000&duration=5&sweeps=3&amplitude=0.3")
+FILE=$(echo "$SWEEP" | jq -r '.filename')
+curl -X POST "http://localhost:10315/audio/play/file?filename=$FILE"
 
 # Focused frequency range for speaker testing
-curl -X POST "http://localhost:10315/audio/sweep/start?start_freq=200&end_freq=2000&duration=3&amplitude=0.5"
+SWEEP=$(curl -s -X POST "http://localhost:10315/audio/generate/sweep?start_freq=200&end_freq=2000&duration=3&amplitude=0.5")
+FILE=$(echo "$SWEEP" | jq -r '.filename')
+curl -X POST "http://localhost:10315/audio/play/file?filename=$FILE"
 
 # Extended frequency range with compensation
-curl -X POST "http://localhost:10315/audio/sweep/start?start_freq=20&end_freq=20000&duration=8&sweeps=2&amplitude=0.3&compensation_mode=inv_sqrt_f"
+SWEEP=$(curl -s -X POST "http://localhost:10315/audio/generate/sweep?start_freq=20&end_freq=20000&duration=8&sweeps=2&amplitude=0.3&compensation_mode=inv_sqrt_f")
+FILE=$(echo "$SWEEP" | jq -r '.filename')
+curl -X POST "http://localhost:10315/audio/play/file?filename=$FILE"
 
-# Check sweep status (shows sweep details)
-curl -X GET http://localhost:10315/audio/noise/status
+# Check playback status
+curl -X GET http://localhost:10315/audio/play/status
 ```
 
 ### Audio Recording Workflow
@@ -2358,10 +1810,22 @@ RECORD_RESPONSE=$(curl -s -X POST "$API_URL/audio/record/start?duration=60&sampl
 RECORDING_ID=$(echo "$RECORD_RESPONSE" | grep -o '"recording_id":"[^"]*' | cut -d'"' -f4)
 echo "Started recording: $RECORDING_ID"
 
-# 2. Wait a moment, then start sine sweep
+# 2. Wait a moment, then generate and play sine sweeps (3×15s)
 sleep 2
-curl -s -X POST "$API_URL/audio/sweep/start?start_freq=20&end_freq=20000&duration=15&sweeps=3&amplitude=0.4"
-echo "Started 3 sine sweeps (45 seconds total)"
+SWEEP_JSON=$(curl -s -X POST "$API_URL/audio/generate/sweep?start_freq=20&end_freq=20000&duration=15&sweeps=3&amplitude=0.4")
+SWEEP_FILE=$(echo "$SWEEP_JSON" | jq -r '.filename')
+curl -s -X POST "$API_URL/audio/play/file?filename=$SWEEP_FILE" > /dev/null
+echo "Playing 3 sine sweeps (45 seconds total)"
+
+# Wait for playback to finish
+while true; do
+  PS=$(curl -s "$API_URL/audio/play/status")
+  ACTIVE=$(echo "$PS" | jq -r '.active')
+  if [ "$ACTIVE" = "false" ]; then
+    break
+  fi
+  sleep 1
+done
 
 # 3. Wait for sweeps to complete, then measure ambient
 sleep 50
@@ -2402,53 +1866,31 @@ echo "$FFT_RESULT" > "fft_analysis_$RECORDING_ID.json"
 class RoomEQController {
     constructor(apiUrl = 'http://localhost:10315') {
         this.apiUrl = apiUrl;
-        this.keepAliveInterval = null;
         this.recordingIntervals = new Map(); // Track multiple recordings
     }
     
-    // Noise generation with keep-alive
-    async startNoise(amplitude = 0.5, duration = 3) {
-        const response = await fetch(
-            `${this.apiUrl}/audio/noise/start?duration=${duration}&amplitude=${amplitude}`, 
-            { method: 'POST' }
-        );
-        
-        if (response.ok) {
-            // Start keep-alive mechanism
-            this.keepAliveInterval = setInterval(() => {
-                this.keepPlaying();
-            }, 2000);
-        }
-        
-        return response.json();
-    }
+  // Noise: generate file and play it
+  async generateNoise(amplitude = 0.5, duration = 3) {
+    const response = await fetch(
+      `${this.apiUrl}/audio/generate/noise?duration=${duration}&amplitude=${amplitude}`,
+      { method: 'POST' }
+    );
+    return response.json();
+  }
+
+  async playFileByFilename(filename, repeats = 1) {
+    const params = new URLSearchParams({ filename, repeats });
+    const response = await fetch(`${this.apiUrl}/audio/play/file?${params}`, { method: 'POST' });
+    return response.json();
+  }
+
+  async stopPlayback() {
+    const response = await fetch(`${this.apiUrl}/audio/play/stop`, { method: 'POST' });
+    return response.json();
+  }
     
-    async keepPlaying(duration = 3) {
-        try {
-            const response = await fetch(`${this.apiUrl}/audio/noise/keep-playing?duration=${duration}`, {
-                method: 'POST'
-            });
-            return response.json();
-        } catch (error) {
-            console.log('Keep-alive failed:', error);
-        }
-    }
-    
-    async stopNoise() {
-        if (this.keepAliveInterval) {
-            clearInterval(this.keepAliveInterval);
-            this.keepAliveInterval = null;
-        }
-        
-        const response = await fetch(`${this.apiUrl}/audio/noise/stop`, {
-            method: 'POST'
-        });
-        
-        return response.json();
-    }
-    
-    // Sine sweep generation
-    async startSineSweeop(options = {}) {
+  // Sine sweep: generate file and play it
+  async startSineSweeop(options = {}) {
         const params = new URLSearchParams({
             start_freq: options.startFreq || 20,
             end_freq: options.endFreq || 20000,
@@ -2458,12 +1900,15 @@ class RoomEQController {
             ...(options.device && { device: options.device })
         });
         
-        const response = await fetch(
-            `${this.apiUrl}/audio/sweep/start?${params}`, 
-            { method: 'POST' }
-        );
-        
-        return response.json();
+    const gen = await fetch(
+      `${this.apiUrl}/audio/generate/sweep?${params}`,
+      { method: 'POST' }
+    );
+    const sweep = await gen.json();
+    if (sweep && sweep.filename) {
+      await this.playFileByFilename(sweep.filename, options.repeats || 1);
+    }
+    return sweep;
     }
     
     // Audio recording
@@ -2608,23 +2053,19 @@ class RoomEQController {
     }
     
     // Status monitoring
-    async getPlaybackStatus() {
-        const response = await fetch(`${this.apiUrl}/audio/noise/status`);
+  async getPlaybackStatus() {
+    const response = await fetch(`${this.apiUrl}/audio/play/status`);
         return response.json();
     }
     
     // Cleanup
     cleanup() {
-        if (this.keepAliveInterval) {
-            clearInterval(this.keepAliveInterval);
-        }
-        
         // Clear all recording monitors
         this.recordingIntervals.forEach(interval => clearInterval(interval));
         this.recordingIntervals.clear();
         
         // Stop any active playback
-        this.stopNoise();
+    this.stopPlayback();
     }
 }
 
@@ -2716,16 +2157,7 @@ Error responses include a `detail` field with error description:
 }
 ```
 
-## Keep-Alive Mechanism Details
-
-The keep-alive mechanism is designed for web applications that need continuous audio playback:
-
-1. **Start playback** with `/audio/noise/start?duration=3`
-2. **Extend playback** every 2-3 seconds with `/audio/noise/keep-playing?duration=3`
-3. **Automatic stop** occurs if no keep-alive request is received before the stop time
-4. **Manual stop** available with `/audio/noise/stop`
-
-This ensures that audio stops within 3 seconds of a web browser closing or losing connectivity, preventing runaway audio playback.
+<!-- Keep-Alive mechanism removed: replaced by generate + play endpoints and unified playback status/stop. -->
 
 ## Hardware Requirements
 
