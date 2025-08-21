@@ -23,7 +23,8 @@ pub struct CurvePoint {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TargetCurve {
     pub name: String,
-    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub expert: bool,
     pub curve: Vec<CurvePoint>,
 }
@@ -32,7 +33,8 @@ pub struct TargetCurve {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizerPreset {
     pub name: String,
-    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub qmax: f64,
     pub mindb: f64,
     pub maxdb: f64,
@@ -49,6 +51,10 @@ fn default_acceptable_error() -> f64 {
 /// Frequency response data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrequencyResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub frequencies: Vec<f64>,
     pub magnitudes_db: Vec<f64>,
 }
@@ -56,7 +62,12 @@ pub struct FrequencyResponse {
 impl FrequencyResponse {
     pub fn new(frequencies: Vec<f64>, magnitudes_db: Vec<f64>) -> Self {
         assert_eq!(frequencies.len(), magnitudes_db.len(), "Frequencies and magnitudes must have same length");
-        Self { frequencies, magnitudes_db }
+        Self { 
+            name: None,
+            description: None,
+            frequencies, 
+            magnitudes_db 
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -104,7 +115,8 @@ pub struct BiquadFilter {
     pub frequency: f64,
     pub q: f64,
     pub gain_db: f64,
-    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub coefficients: BiquadCoefficients,
 }
 
@@ -133,7 +145,7 @@ impl BiquadFilter {
             frequency,
             q,
             gain_db: 0.0,
-            description: format!("High pass {:.1}Hz", frequency),
+            description: Some(format!("High pass {:.1}Hz", frequency)),
             coefficients: BiquadCoefficients {
                 b: [b0, b1, b2],
                 a: [a0, a1, a2],
@@ -160,7 +172,7 @@ impl BiquadFilter {
             frequency,
             q,
             gain_db,
-            description: format!("Peaking EQ {:.1}Hz {:.1}dB", frequency, gain_db),
+            description: Some(format!("Peaking EQ {:.1}Hz {:.1}dB", frequency, gain_db)),
             coefficients: BiquadCoefficients {
                 b: [b0, b1, b2],
                 a: [a0, a1, a2],

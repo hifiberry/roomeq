@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 /// Complete optimization job input
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizationJob {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub measured_curve: FrequencyResponse,
     pub target_curve: TargetCurveData,
     pub optimizer_params: OptimizerPreset,
@@ -15,9 +19,12 @@ pub struct OptimizationJob {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TargetCurveData {
     pub name: String,
-    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
     pub expert: bool,
-    pub curve: Vec<CurvePoint>,
+    pub frequencies: Vec<f64>,
+    pub magnitudes_db: Vec<f64>,
 }
 
 /// Step output during optimization
@@ -274,79 +281,47 @@ impl RoomEQOptimizer {
     }
 
     fn interpolate_target_curve(&self, target_curve: &TargetCurveData, frequency: f64) -> f64 {
-        let curve_points = &target_curve.curve;
+        let frequencies = &target_curve.frequencies;
+        let magnitudes_db = &target_curve.magnitudes_db;
         
-        if curve_points.is_empty() {
+        if frequencies.is_empty() {
             return 0.0;
         }
 
-        if frequency <= curve_points[0].frequency {
-            return curve_points[0].target_db;
+        if frequency <= frequencies[0] {
+            return magnitudes_db[0];
         }
 
-        if frequency >= curve_points[curve_points.len() - 1].frequency {
-            return curve_points[curve_points.len() - 1].target_db;
+        if frequency >= frequencies[frequencies.len() - 1] {
+            return magnitudes_db[magnitudes_db.len() - 1];
         }
 
         // Find the two points to interpolate between
         let mut i = 0;
-        while i < curve_points.len() - 1 && curve_points[i + 1].frequency < frequency {
+        while i < frequencies.len() - 1 && frequencies[i + 1] < frequency {
             i += 1;
         }
 
-        let p1 = &curve_points[i];
-        let p2 = &curve_points[i + 1];
+        let f1 = frequencies[i];
+        let f2 = frequencies[i + 1];
+        let m1 = magnitudes_db[i];
+        let m2 = magnitudes_db[i + 1];
 
         // Linear interpolation in log-frequency space
         let log_f = frequency.ln();
-        let log_f1 = p1.frequency.ln();
-        let log_f2 = p2.frequency.ln();
+        let log_f1 = f1.ln();
+        let log_f2 = f2.ln();
         
         let t = (log_f - log_f1) / (log_f2 - log_f1);
-        p1.target_db + t * (p2.target_db - p1.target_db)
+        m1 + t * (m2 - m1)
     }
 
     /// Interpolate weight for a given frequency from target curve
     fn interpolate_weight(&self, target_curve: &TargetCurveData, frequency: f64, error_sign: f64) -> f64 {
-        let curve_points = &target_curve.curve;
-        
-        if curve_points.is_empty() {
-            return 1.0;
-        }
-
-        // Find the appropriate weight
-        if frequency <= curve_points[0].frequency {
-            return self.extract_weight_value(&curve_points[0].weight, error_sign);
-        }
-
-        if frequency >= curve_points[curve_points.len() - 1].frequency {
-            return self.extract_weight_value(&curve_points[curve_points.len() - 1].weight, error_sign);
-        }
-
-        // Find the two points to interpolate between
-        let mut i = 0;
-        while i < curve_points.len() - 1 && curve_points[i + 1].frequency < frequency {
-            i += 1;
-        }
-
-        let p1 = &curve_points[i];
-        let p2 = &curve_points[i + 1];
-
-        // Extract weights from both points
-        let w1 = self.extract_weight_value(&p1.weight, error_sign);
-        let w2 = self.extract_weight_value(&p2.weight, error_sign);
-
-        // Linear interpolation in log-frequency space
-        let log_f = frequency.ln();
-        let log_f1 = p1.frequency.ln();
-        let log_f2 = p2.frequency.ln();
-        
-        if (log_f2 - log_f1).abs() < 1e-10 {
-            return w1;
-        }
-
-        let t = (log_f - log_f1) / (log_f2 - log_f1);
-        w1 + t * (w2 - w1)
+        // Simplified weight calculation since the arrays format doesn't include weight data
+        // Return a default weight of 1.0 for all frequencies
+        // TODO: If needed, add weight arrays to TargetCurveData in the future
+        1.0
     }
 
     /// Extract weight value considering asymmetric weights (positive vs negative errors)
