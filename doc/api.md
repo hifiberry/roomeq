@@ -1423,70 +1423,80 @@ Run high-performance EQ optimization using Rust backend with real-time streaming
 **Content-Type:** `application/json`  
 **Response-Type:** `text/plain` (Server-Sent Events stream)
 
-**Request Body Options:**
+**Request Body:**
+The endpoint accepts a complete optimization job JSON object and passes it directly to the Rust optimizer without any processing. The JSON structure should match the Rust optimizer's expected format:
 
-**Option 1: From Recording (Recommended)**
 ```json
 {
-  "recording_id": "abc12345",
-  "target_curve": "weighted_flat",
-  "optimizer_preset": "default",
+  "measured_curve": {
+    "frequencies": [20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000, 20000],
+    "magnitudes_db": [2.1, 3.8, 4.2, 3.1, 1.9, 0.8, -0.5, -1.2, -0.8, 0.2, 1.5, 2.8, 3.2, 2.1, 0.9, -1.2, -2.8, -3.5, -2.9, -1.8, -0.5, 1.2, 2.5, 1.8, 0.9, -0.3, -1.1, -0.8, -0.2, 0.5, 1.2]
+  },
+  "target_curve": {
+    "curve": [
+      {"frequency": 20.0, "target_db": 0.0, "weight": [1.0, 0.5]},
+      {"frequency": 100.0, "target_db": 0.0, "weight": 1.0},
+      {"frequency": 1000.0, "target_db": 0.0, "weight": null},
+      {"frequency": 20000.0, "target_db": 0.0, "weight": null}
+    ]
+  },
+  "optimizer_params": {
+    "qmax": 10.0,
+    "mindb": -12.0,
+    "maxdb": 12.0,
+    "add_highpass": true,
+    "acceptable_error": 0.5
+  },
   "filter_count": 8,
-  "window": "hann",
-  "points_per_octave": 12,
-  "normalize": 1000.0
+  "sample_rate": 48000
 }
 ```
 
-**Option 2: From FFT Data**
-```json
-{
-  "frequencies": [20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200],
-  "magnitudes": [-5.2, -3.1, -2.8, -1.5, -0.8, 2.1, 3.5, 1.2, -1.8, -3.2, -4.1],
-  "target_curve": "harman",
-  "optimizer_preset": "smooth",
-  "filter_count": 6,
-  "sample_rate": 48000,
-  "add_highpass": true
-}
-```
+**Required Fields:**
+- `measured_curve.frequencies`: Array of frequency values in Hz
+- `measured_curve.magnitudes_db`: Array of magnitude values in dB (same length as frequencies)
+- `target_curve.curve`: Array of target curve points with frequency, target_db, and optional weight
+- `optimizer_params`: Optimization parameters (qmax, mindb, maxdb, add_highpass, acceptable_error)
+- `filter_count`: Number of filters to generate (1-20)
+- `sample_rate`: Audio sample rate
 
-**Parameters:**
-- `recording_id` (string, option 1): ID of completed recording to analyze
-- `frequencies` (array, option 2): Frequency values in Hz
-- `magnitudes` (array, option 2): Magnitude values in dB (same length as frequencies)
-- `target_curve` (string): Target response curve name (see `/eq/presets/targets`)
-- `optimizer_preset` (string): Optimization style (see `/eq/presets/optimizers`)
-- `filter_count` (integer, optional): Number of EQ filters to generate (1-20, default: 8)
-- `sample_rate` (float, optional): Audio sample rate for FFT data (default: 48000)
-- `add_highpass` (boolean, optional): Override preset high-pass filter setting
-- `window` (string, optional): FFT window function for recording analysis (default: "hann")
-- `normalize` (float, optional): Normalization frequency for recording analysis
-- `points_per_octave` (integer, optional): Frequency resolution for recording analysis (1-100, default: 12)
+**Optional Fields:**
+- `target_curve.name`: Human-readable name for the target curve
+- `target_curve.description`: Description of the target curve
+- `target_curve.expert`: Whether this is an expert-level curve
+- `optimizer_params.name`: Name of the optimizer preset  
+- `optimizer_params.description`: Description of the optimizer preset
 
-**Example Requests:**
+**Weight System:**
+The weight field in target curve points supports:
+- `null` or omitted: Use default weighting
+- Single number (e.g., `1.5`): Apply same weight to boost and cut
+- Array `[positive, negative]` (e.g., `[1.0, 0.5]`): Different weights for boost vs cut
+
+**Example Request:**
 ```bash
-# Optimize from recording with streaming results
 curl -X POST "http://localhost:10315/eq/optimize" \
   -H "Content-Type: application/json" \
   -d '{
-    "recording_id": "abc12345",
-    "target_curve": "weighted_flat",
-    "optimizer_preset": "default",
-    "filter_count": 8
-  }'
-
-# Optimize from FFT data with custom parameters
-curl -X POST "http://localhost:10315/eq/optimize" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "frequencies": [63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000],
-    "magnitudes": [2.1, 3.8, 4.2, 3.1, 1.9, 0.8, -0.5, -1.2, -0.8, 0.2, 1.5, 2.8, 3.2, 2.1, 0.9, -1.2, -2.8, -3.5, -2.9, -1.8, -0.5, 1.2, 2.5],
-    "target_curve": "harman",
-    "optimizer_preset": "smooth",
+    "measured_curve": {
+      "frequencies": [63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000],
+      "magnitudes_db": [2.1, 3.8, 4.2, 3.1, 1.9, 0.8, -0.5, -1.2, -0.8, 0.2, 1.5, 2.8, 3.2, 2.1, 0.9, -1.2, -2.8, -3.5, -2.9, -1.8, -0.5, 1.2, 2.5]
+    },
+    "target_curve": {
+      "curve": [
+        {"frequency": 20.0, "target_db": 0.0, "weight": null},
+        {"frequency": 20000.0, "target_db": 0.0, "weight": null}
+      ]
+    },
+    "optimizer_params": {
+      "qmax": 10.0,
+      "mindb": -12.0,
+      "maxdb": 12.0,
+      "add_highpass": true,
+      "acceptable_error": 0.5
+    },
     "filter_count": 6,
-    "sample_rate": 48000,
-    "add_highpass": true
+    "sample_rate": 48000
   }'
 ```
 

@@ -35,7 +35,7 @@ from .recording import (
 from .microphone import MicrophoneDetector, detect_microphones
 from .analysis import measure_spl
 from .signal_generator import SignalGenerator
-from .rust_optimizer import optimize_with_rust, RustOptimizerError
+from .rust_optimizer import optimize_with_rust_json, RustOptimizerError
 from .presets import list_target_curves, list_optimizer_presets
 
 # Configure logging
@@ -1931,110 +1931,27 @@ def eq_optimizers():
 
 @app.route("/eq/optimize", methods=["POST"])
 def eq_optimize():
-    """Run EQ optimization from FFT data or recording with streaming output."""
+    """Run EQ optimization from complete JSON job definition with streaming output."""
     from flask import Response
     
-    # Extract request data BEFORE creating the generator (to avoid request context issues)
-    if request.is_json:
-        data = request.get_json()
-    else:
-        data = {}
+    # Extract the complete job JSON from the request
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json"}), 400
+    
+    job_data = request.get_json()
     
     def generate_optimization_stream():
         try:
-            # Get parameters from pre-extracted data
-            target_curve = data.get('target_curve', 'weighted_flat')
-            optimizer_preset = data.get('optimizer_preset', 'default')
-            filter_count = int(data.get('filter_count', 8))
-            sample_rate = float(data.get('sample_rate', 48000))
-            add_highpass = bool(data.get('add_highpass', True))
-            recording_id = data.get('recording_id')
-            
-            # Validate filter count
-            if not (1 <= filter_count <= 20):
-                yield f"data: {json.dumps({'error': 'filter_count must be between 1 and 20'})}\n\n"
-                return
-            
-            # Get frequency response data
-            frequencies = None
-            magnitudes = None
-            
-            if recording_id:
-                # Use recording for optimization
-                try:
-                    # Get recording file path
-                    recording_info = get_recording_status(recording_id)
-                    if recording_info['status'] != 'completed':
-                        yield f"data: {json.dumps({'error': f'Recording {recording_id} is not completed'})}\n\n"
-                        return
-                    
-                    # Analyze recording to get FFT data
-                    file_path = recording_info.get('filepath')
-                    if not file_path or not os.path.exists(file_path):
-                        yield f"data: {json.dumps({'error': f'Recording file not found for {recording_id}'})}\n\n"
-                        return
-                    
-                    # Use default FFT analysis parameters
-                    window_type = data.get('window', 'hann')
-                    normalize = data.get('normalize', 1000.0)
-                    points_per_octave = data.get('points_per_octave', 12)
-                    
-                    result = analyze_wav_file(
-                        file_path, window_type, None, None, None, 
-                        normalize, points_per_octave, None
-                    )
-                    
-                    # Extract frequency response from log summary if available
-                    if 'log_frequency_summary' in result.get('fft_analysis', {}) and 'error' not in result['fft_analysis']['log_frequency_summary']:
-                        log_data = result['fft_analysis']['log_frequency_summary']
-                        frequencies = log_data['frequencies']
-                        magnitudes = log_data['magnitudes']
-                    else:
-                        # Fallback to full resolution data
-                        fft_data = result['fft_analysis']
-                        frequencies = fft_data['frequencies']
-                        magnitudes = fft_data['magnitudes']
-                    
-                except Exception as e:
-                    logger.error(f"Error analyzing recording {recording_id}: {e}")
-                    yield f"data: {json.dumps({'error': f'Failed to analyze recording: {str(e)}'})}\n\n"
-                    return
-            
-            elif 'frequencies' in data and 'magnitudes' in data:
-                # Use provided FFT data
-                frequencies = data['frequencies']
-                magnitudes = data['magnitudes']
-                
-                if len(frequencies) != len(magnitudes):
-                    yield f"data: {json.dumps({'error': 'frequencies and magnitudes arrays must have the same length'})}\n\n"
-                    return
-                    
-            else:
-                yield f"data: {json.dumps({'error': 'Either recording_id or frequencies/magnitudes data must be provided'})}\n\n"
-                return
-            
-            # Validate frequency data
-            if not frequencies or not magnitudes:
-                yield f"data: {json.dumps({'error': 'No valid frequency response data found'})}\n\n"
-                return
-            
-            if len(frequencies) < 10:
-                yield f"data: {json.dumps({'error': 'Insufficient frequency data points for optimization'})}\n\n"
+            # Validate that we have a complete job definition
+            if not job_data:
+                yield f"data: {json.dumps({'error': 'No job data provided'})}\n\n"
                 return
             
             # Send initial status
-            yield f"data: {json.dumps({'type': 'started', 'message': f'Starting optimization with {len(frequencies)} frequency points', 'parameters': {'target_curve': target_curve, 'optimizer_preset': optimizer_preset, 'filter_count': filter_count, 'sample_rate': sample_rate, 'add_highpass': add_highpass}})}\n\n"
+            yield f"data: {json.dumps({'type': 'started', 'message': 'Starting optimization', 'job_data': job_data})}\n\n"
             
-            # Run optimization with streaming output
-            for step in optimize_with_rust(
-                frequencies=frequencies,
-                magnitudes=magnitudes,
-                target_curve=target_curve,
-                optimizer_preset=optimizer_preset,
-                filter_count=filter_count,
-                sample_rate=sample_rate,
-                add_highpass=add_highpass
-            ):
+            # Pass the complete JSON object directly to the Rust optimizer
+            for step in optimize_with_rust_json(job_data):
                 yield f"data: {json.dumps(step)}\n\n"
                 
         except RustOptimizerError as e:

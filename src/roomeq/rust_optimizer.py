@@ -126,6 +126,65 @@ class RustOptimizer:
             except Exception as e:
                 logger.warning(f"Failed to clean up job file {job_file}: {e}")
     
+    def optimize_streaming_json(self, job_data: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
+        """
+        Run optimization with streaming output using a complete job JSON object.
+        
+        This method accepts a complete job definition and passes it directly
+        to the Rust optimizer without any processing or transformation.
+        
+        Args:
+            job_data: Complete optimization job JSON object
+            
+        Yields:
+            Optimization steps in real-time without buffering.
+        """
+        logger.info("Starting Rust optimization with direct JSON pass-through")
+        
+        start_time = time.time()
+        logger.info(f"EQ optimization started at {time.strftime('%H:%M:%S')}")
+        
+        # Create temporary job file with the exact JSON provided
+        job_file = None
+        try:
+            # Write job data directly to temporary file without any modification
+            job_file = self._write_job_file(job_data)
+            
+            # Run optimizer and stream results
+            yield from self._run_optimizer_streaming(job_file)
+            
+        except Exception as e:
+            logger.error(f"Error during streaming optimization: {e}")
+            raise RustOptimizerError(f"Optimization failed: {e}")
+        finally:
+            # Clean up temporary job file
+            if job_file and os.path.exists(job_file):
+                try:
+                    os.unlink(job_file)
+                    logger.debug(f"Cleaned up temporary job file: {job_file}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to clean up job file {job_file}: {cleanup_error}")
+                    
+        total_time = time.time() - start_time
+        logger.info(f"EQ optimization completed in {total_time:.2f} seconds")
+
+    def _write_job_file(self, job_data: Dict[str, Any]) -> str:
+        """Write job data to a temporary file without any processing."""
+        try:
+            # Create temporary file for job configuration
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                json.dump(job_data, f, indent=2)
+                job_file = f.name
+            
+            logger.debug(f"Created job file: {job_file}")
+            logger.debug(f"Job data written: {len(json.dumps(job_data))} characters")
+            
+            return job_file
+            
+        except Exception as e:
+            logger.error(f"Error writing job file: {e}")
+            raise RustOptimizerError(f"Failed to create job file: {e}")
+    
     def _create_job_config(
         self,
         frequencies: List[float],
@@ -176,33 +235,42 @@ class RustOptimizer:
             curve_data = get_target_curve(target_curve or "flat")
             logger.debug(f"Loaded target curve '{curve_data['name']}' from presets")
             
-            # Convert curve format for Rust optimizer
-            # Extract frequency and magnitude points from curve definition
-            frequencies = []
-            magnitudes_db = []
-            
+            # Keep the original curve format for Rust optimizer (with weights)
+            # Convert the curve points to the expected CurvePoint format
+            curve_points = []
             for point in curve_data["curve"]:
-                frequencies.append(point["frequency"])
-                magnitudes_db.append(point["target_db"])
-            
-            return {
-                "name": curve_data["name"],
-                "description": curve_data.get("description"),  # Optional field
-                "frequencies": frequencies,
-                "magnitudes_db": magnitudes_db
+                curve_points.append({
+                    "frequency": point["frequency"],
+                    "target_db": point["target_db"], 
+                    "weight": point.get("weight")  # Can be None, float, or list
+                })
+
+            # Only include optional metadata fields if they have meaningful values
+            result = {
+                "curve": curve_points
             }
+            
+            # Add optional fields only if they exist and have non-empty values
+            if curve_data.get("name"):
+                result["name"] = curve_data["name"]
+            if curve_data.get("description"):
+                result["description"] = curve_data["description"]
+            if curve_data.get("expert") is not None:
+                result["expert"] = curve_data["expert"]
+                
+            return result
             
         except ValueError as e:
             logger.warning(f"Target curve '{target_curve}' not found: {e}")
             logger.debug("Falling back to flat curve")
-            # Fallback to flat curve
+            # Fallback to flat curve - minimal structure without metadata
             return {
-                "name": "Flat Response",
-                "description": "Flat frequency response (fallback)",
-                "frequencies": [20, 20000],
-                "magnitudes_db": [0, 0]
+                "curve": [
+                    {"frequency": 20.0, "target_db": 0.0, "weight": None},
+                    {"frequency": 20000.0, "target_db": 0.0, "weight": None}
+                ]
             }
-    
+            
     def _get_optimizer_params(self, preset: str, add_highpass: bool) -> Dict[str, Any]:
         """Get optimizer parameters by preset name."""
         logger.debug(f"Loading optimizer parameters for preset: '{preset}', add_highpass={add_highpass}")
@@ -212,11 +280,8 @@ class RustOptimizer:
             preset_data = get_optimizer_preset(preset or "default")
             logger.debug(f"Loaded optimizer preset '{preset_data['name']}' from presets")
             
-            # Convert preset format for Rust optimizer (if needed)
-            # Keep the preset structure but potentially add description as optional
+            # Convert preset format for Rust optimizer - only include functional parameters
             params = {
-                "name": preset_data["name"],
-                "description": preset_data.get("description"),  # Optional field
                 "qmax": preset_data["qmax"],
                 "mindb": preset_data["mindb"], 
                 "maxdb": preset_data["maxdb"],
@@ -224,20 +289,24 @@ class RustOptimizer:
                 "acceptable_error": preset_data["acceptable_error"]
             }
             
+            # Add optional metadata fields only if they exist and have meaningful values
+            if preset_data.get("name"):
+                params["name"] = preset_data["name"]
+            if preset_data.get("description"):
+                params["description"] = preset_data["description"]
+            
             logger.debug(f"Using optimizer params: qmax={params['qmax']}, mindb={params['mindb']}, maxdb={params['maxdb']}")
             return params
             
         except ValueError as e:
             logger.warning(f"Optimizer preset '{preset}' not found: {e}")
             logger.debug("Falling back to default preset")
-            # Fallback to default
+            # Fallback to default - only functional parameters
             default_preset = get_optimizer_preset("default")
             return {
-                "name": "Default (fallback)",
-                "description": "Default optimization parameters (fallback)",
                 "qmax": default_preset["qmax"],
                 "mindb": default_preset["mindb"],
-                "maxdb": default_preset["maxdb"], 
+                "maxdb": default_preset["maxdb"],
                 "add_highpass": add_highpass if add_highpass is not None else default_preset["add_highpass"],
                 "acceptable_error": default_preset["acceptable_error"]
             }
@@ -727,71 +796,34 @@ class RustOptimizer:
             return None
 
 
-# Global instance
-rust_optimizer = RustOptimizer()
-
-
-def optimize_with_rust(
-    frequencies: List[float],
-    magnitudes: List[float],
-    target_curve: str = "weighted_flat",
-    optimizer_preset: str = "default",
-    filter_count: int = 8,
-    sample_rate: float = 48000,
-    add_highpass: bool = True
-) -> Iterator[Dict[str, Any]]:
+def optimize_with_rust_json(job_data: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
     """
     Run room EQ optimization using the Rust backend with streaming output.
     
-    This function streams optimization steps in real-time without buffering,
-    allowing clients to receive immediate feedback on progress.
+    This function accepts a complete job JSON object and passes it directly
+    to the Rust optimizer without any processing or transformation.
     
     Args:
-        frequencies: Frequency points in Hz
-        magnitudes: Magnitude values in dB
-        target_curve: Target response curve name
-        optimizer_preset: Optimization preset name
-        filter_count: Number of filters to generate
-        sample_rate: Audio sample rate
-        add_highpass: Whether to include adaptive high-pass filter
+        job_data: Complete optimization job JSON object
     
     Yields:
         Optimization steps with real-time progress information
     """
-    logger.info(f"optimize_with_rust called with: frequencies={len(frequencies)} points, "
-               f"target_curve='{target_curve}', optimizer_preset='{optimizer_preset}', "
-               f"filter_count={filter_count}, sample_rate={sample_rate}, add_highpass={add_highpass}")
+    logger.info(f"optimize_with_rust_json called with job data keys: {list(job_data.keys())}")
     
-    # Adjust filter count if high-pass is included
-    if add_highpass and filter_count > 1:
-        # Rust optimizer automatically adds HP, so we need one less PEQ
-        effective_filter_count = filter_count - 1
-        logger.info(f"Adjusting filter count from {filter_count} to {effective_filter_count} PEQs + 1 HP")
-    else:
-        effective_filter_count = filter_count
-        logger.info(f"Using {effective_filter_count} filters (no high-pass adjustment needed)")
+    # Create a simple pass-through optimizer instance
+    rust_optimizer = RustOptimizer()
     
     try:
-        logger.info("Starting rust optimizer streaming...")
+        logger.info("Starting rust optimizer streaming with direct JSON...")
         step_count = 0
-        for step in rust_optimizer.optimize_streaming(
-            frequencies=frequencies,
-            magnitudes=magnitudes,
-            target_curve=target_curve,
-            optimizer_preset=optimizer_preset,
-            filter_count=effective_filter_count,
-            sample_rate=sample_rate,
-            add_highpass=add_highpass
-        ):
+        for step in rust_optimizer.optimize_streaming_json(job_data):
             step_count += 1
-            logger.debug(f"Yielding step {step_count}: {step.get('type', 'unknown')} - {step.get('message', 'no message')}")
+            logger.debug(f"Received step {step_count}: {step.get('type', 'unknown')}")
             yield step
-        
-        logger.info(f"Rust optimization completed after {step_count} steps")
+            
+        logger.info(f"Rust optimizer streaming completed after {step_count} steps")
         
     except Exception as e:
-        logger.error(f"Error in optimize_with_rust: {e}")
-        logger.error(f"Exception type: {type(e).__name__}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise
+        logger.error(f"Error in rust optimizer streaming: {e}")
+        raise RustOptimizerError(f"Rust optimizer failed: {e}")
