@@ -158,8 +158,7 @@ def run_rust_optimizer(
     cmd = [rust_binary_path]
     if show_progress:
         cmd.append("--progress")
-    if show_result:
-        cmd.append("--result")
+    # Note: --result flag removed, now always enabled
     if human_readable:
         cmd.append("--human-readable")
     
@@ -363,14 +362,14 @@ def main():
     
     print("\n🎯 Demo completed!")
     print("\n📖 Command Line Usage Examples:")
-    print("   # JSON output with progress and result")
-    print("   roomeq-optimizer --progress --result < job.json")
+    print("   # JSON output with progress (result always included)")
+    print("   roomeq-optimizer --progress < job.json")
     print()
     print("   # Human-readable output")  
-    print("   roomeq-optimizer --progress --result --human-readable < job.json")
+    print("   roomeq-optimizer --progress --human-readable < job.json")
     print()
     print("   # Silent mode (result only)")
-    print("   roomeq-optimizer --result < job.json")
+    print("   roomeq-optimizer < job.json")
     print()
     print("   # Monitor mode (progress only)")
     print("   roomeq-optimizer --progress --human-readable < job.json")
