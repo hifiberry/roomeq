@@ -1123,7 +1123,8 @@ Compare two audio files using FFT difference analysis. This endpoint supports mu
 **Analysis Options:**
 - `window` (string, optional): Window function - "hann", "hamming", "blackman", "rectangular", or "none" (default: "hann")
 - `points_per_octave` (integer, optional): Logarithmic frequency resolution (1-100, default: 12)
-- `normalize` (float, optional): Frequency in Hz to normalize both files to 0 dB before comparison
+- `normalize` (float, optional): Frequency in Hz to normalize both files to 0 dB before FFT analysis
+- `normalize_frequency` (float, optional): Frequency in Hz to normalize difference at (both signals normalized to same level at this frequency before computing difference, default: 1000 Hz). Set to "none" to disable.
 - `start_time` (float, optional): Start analysis time in seconds (default: 0)
 - `start_at` (float, optional): Alternative to start_time - start analysis time in seconds
 - `duration` (float, optional): Analysis duration in seconds (default: entire file)
@@ -1142,6 +1143,15 @@ curl -X POST "http://localhost:10315/audio/analyze/fft-diff?filepath1=/tmp/refer
 
 # Mixed input types - recording ID with filename
 curl -X POST "http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc123&filename2=noise_signal.wav&window=hamming&points_per_octave=12"
+
+# Compare with difference normalization at 1 kHz (default)
+curl -X POST "http://localhost:10315/audio/analyze/fft-diff?filename1=sweep_10hz_22000hz_10s.wav&filename2=recording_abc123.wav&normalize_frequency=1000"
+
+# Compare with difference normalization at 500 Hz
+curl -X POST "http://localhost:10315/audio/analyze/fft-diff?recording_id1=ref_signal&recording_id2=measured_signal&normalize_frequency=500"
+
+# Disable difference normalization
+curl -X POST "http://localhost:10315/audio/analyze/fft-diff?filename1=signal1.wav&filename2=signal2.wav&normalize_frequency=none"
 ```
 
 **Success Response (200):**
@@ -1166,12 +1176,20 @@ curl -X POST "http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc123
       "fft_size": 32768,
       "points_per_octave": 16,
       "normalize": 1000.0,
+      "normalize_frequency": 1000.0,
       "start_time": 0.0,
       "analyzed_duration": 10.0,
       "analyzed_samples": 480000
     }
   },
   "difference_analysis": {
+    "normalization": {
+      "normalization_applied": true,
+      "normalize_frequency": 1000.0,
+      "actual_normalize_frequency": 1000.0,
+      "original_mag1_at_norm_freq": -18.5,
+      "original_mag2_at_norm_freq": -16.2
+    },
     "frequencies": [20.0, 23.8, 28.3, 33.7, 40.1, 47.8, 56.8, 67.6, 80.4, 95.6, 113.8, 135.4, 161.0, 191.7, 228.2, 271.7, 323.6, 385.4, 459.2, 547.1, 651.9, 776.5, 925.0, 1102.3, 1313.4, 1565.0, 1864.7, 2222.4, 2649.0, 3158.1, 3765.6, 4490.2, 5353.8, 6380.5, 7599.3, 9056.8, 10799.8, 12876.4, 15343.5, 18282.5],
     "magnitudes": [-2.1, -1.8, -1.2, -0.8, -0.3, 0.2, 0.8, 1.5, 2.3, 2.8, 3.1, 2.9, 2.4, 1.8, 1.2, 0.5, -0.2, -0.9, -1.6, -2.2, -2.8, -3.1, -2.9, -2.4, -1.8, -1.1, -0.4, 0.3, 1.0, 1.7, 2.3, 2.8, 3.2, 3.4, 3.1, 2.7, 2.1, 1.4, 0.7, 0.1],
     "statistics": {
@@ -1209,8 +1227,14 @@ curl -X POST "http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc123
 ```
 
 **Response Fields:**
+- `difference_analysis.normalization`: Information about normalization applied (present only if normalize_frequency was used)
+  - `normalization_applied`: Whether normalization was successfully applied
+  - `normalize_frequency`: Requested normalization frequency in Hz
+  - `actual_normalize_frequency`: Actual frequency used (closest available frequency bin)
+  - `original_mag1_at_norm_freq`: Original magnitude of file1 at normalization frequency
+  - `original_mag2_at_norm_freq`: Original magnitude of file2 at normalization frequency
 - `difference_analysis.frequencies`: Frequency points for the comparison (Hz)
-- `difference_analysis.magnitudes`: Magnitude difference (file1 - file2) in dB at each frequency
+- `difference_analysis.magnitudes`: Magnitude difference (file1 - file2) in dB at each frequency (after normalization if applied)
 - `difference_analysis.statistics`: Overall statistical analysis of the differences
 - `frequency_bands_analysis`: Difference analysis broken down by standard frequency bands
 - `individual_analyses`: Key metrics from each individual FFT analysis

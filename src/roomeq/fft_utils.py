@@ -8,8 +8,12 @@ only when needed to support systems without matplotlib installed.
 
 import os
 import numpy as np
+import logging
 from typing import Tuple, Dict, List, Union
 from pathlib import Path
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 
@@ -397,9 +401,10 @@ def find_peaks(frequencies: np.ndarray, magnitudes: np.ndarray,
 def fft_diff(fft_result1: Dict, fft_result2: Dict, 
              title: str = "FFT Difference",
              description: str = None,
-             prefer_smoothed: bool = False) -> Dict:
+             prefer_smoothed: bool = False,
+             normalize_frequency: float = None) -> Dict:
     """
-    Create a difference between two FFT analysis results.
+    Create a difference between two FFT analysis results with optional normalization.
     
     This function computes the difference between two FFT results, typically used
     to compare input vs output signals, or measurement vs reference signals.
@@ -411,6 +416,8 @@ def fft_diff(fft_result1: Dict, fft_result2: Dict,
         title: Title for the difference result
         description: Optional description of what the difference represents
         prefer_smoothed: If True, prefer log_frequency_summary data over full resolution
+        normalize_frequency: If specified, normalize both signals at this frequency (Hz) 
+                           before computing difference. Default is None (no normalization).
         
     Returns:
         Dict containing the difference analysis with same structure as input FFT results
@@ -476,7 +483,48 @@ def fft_diff(fft_result1: Dict, fft_result2: Dict,
         # Interpolate second result to match first result's frequency grid
         target_mags2 = np.interp(target_freqs, freqs2, mags2)
         
-        # Compute difference: result1 - result2 (in dB domain)
+        # Apply normalization if requested
+        normalization_info = None
+        if normalize_frequency is not None:
+            try:
+                # Find the closest frequency bin to the normalization frequency
+                norm_idx = np.argmin(np.abs(target_freqs - normalize_frequency))
+                actual_norm_freq = float(target_freqs[norm_idx])
+                
+                # Get magnitude values at normalization frequency
+                norm_mag1 = target_mags1[norm_idx]
+                norm_mag2 = target_mags2[norm_idx]
+                
+                # Normalize both signals by subtracting their magnitude at the normalization frequency
+                # This makes both signals have 0 dB at the normalization frequency
+                target_mags1_normalized = target_mags1 - norm_mag1
+                target_mags2_normalized = target_mags2 - norm_mag2
+                
+                # Use normalized magnitudes for difference calculation
+                target_mags1 = target_mags1_normalized
+                target_mags2 = target_mags2_normalized
+                
+                # Store normalization info for the result
+                normalization_info = {
+                    'normalize_frequency': float(normalize_frequency),
+                    'actual_normalize_frequency': actual_norm_freq,
+                    'original_mag1_at_norm_freq': float(norm_mag1),
+                    'original_mag2_at_norm_freq': float(norm_mag2),
+                    'normalization_applied': True
+                }
+                
+                logger.info(f"Applied normalization at {actual_norm_freq:.1f} Hz "
+                           f"(requested: {normalize_frequency:.1f} Hz)")
+                
+            except Exception as e:
+                logger.warning(f"Failed to apply normalization at {normalize_frequency} Hz: {e}")
+                normalization_info = {
+                    'normalize_frequency': float(normalize_frequency),
+                    'normalization_applied': False,
+                    'error': str(e)
+                }
+        
+        # Compute difference: result1 - result2 (in dB domain, after optional normalization)
         diff_mags = target_mags1 - target_mags2
         
         # Calculate statistics of the difference
@@ -528,6 +576,10 @@ def fft_diff(fft_result1: Dict, fft_result2: Dict,
                 'computation': 'result1_db - result2_db'
             }
         }
+        
+        # Add normalization info if it was applied
+        if normalization_info is not None:
+            diff_result['normalization'] = normalization_info
         
         return diff_result
         

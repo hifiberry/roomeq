@@ -622,6 +622,7 @@ def analyze_fft_diff():
         duration_str = request.args.get("duration")
         normalize_str = request.args.get("normalize")
         points_per_octave_str = request.args.get("points_per_octave")
+        normalize_frequency_str = request.args.get("normalize_frequency", "1000")  # Default to 1kHz
         
         # Handle both start_time and start_at (start_at takes precedence if both provided)
         if start_at_str and start_time_str and start_time_str != "0":
@@ -658,6 +659,11 @@ def analyze_fft_diff():
                     abort(400, "points_per_octave must be between 1 and 100")
             except ValueError:
                 abort(400, "Invalid points_per_octave: must be an integer")
+        
+        # Parse normalize_frequency parameter
+        normalize_frequency = None
+        if normalize_frequency_str and normalize_frequency_str.lower() != "none":
+            normalize_frequency = validate_float_param("normalize_frequency", normalize_frequency_str, 10.0, 22000.0)
         
         
         
@@ -790,7 +796,8 @@ def analyze_fft_diff():
         diff_result = fft_diff(result1, result2, 
                               title=f"Difference: {file1_info['filename']} vs {file2_info['filename']}",
                               description=f"FFT difference analysis between {file1_info['filename']} and {file2_info['filename']}",
-                              prefer_smoothed=prefer_smoothed)
+                              prefer_smoothed=prefer_smoothed,
+                              normalize_frequency=normalize_frequency)
         
         # Prepare comprehensive response
         response = {
@@ -813,6 +820,7 @@ def analyze_fft_diff():
                     "fft_size": result1["fft_analysis"]["fft_size"],
                     "points_per_octave": points_per_octave,
                     "normalize": normalize,
+                    "normalize_frequency": normalize_frequency,
                     "start_time": start_time,
                     "analyzed_duration": result1["file_info"]["analyzed_duration"],
                     "analyzed_samples": result1["file_info"]["analyzed_samples"]
