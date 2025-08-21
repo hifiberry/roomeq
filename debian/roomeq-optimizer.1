@@ -1,5 +1,3 @@
-.TH ROOMEQ-OPTIMIZER 1 "August 2025" "roomeq 0.6.0" "User Commands"
-.SH NAME
 .TH ROOMEQ-OPTIMIZER 1 "August 2025" "roomeq 0.6.1" "Audio Processing"
 .SH NAME
 roomeq-optimizer \- High-performance Rust optimizer for room equalization
@@ -25,14 +23,20 @@ filters, corrected response, and residual error. Without this flag,
 only the final result is output.
 
 .TP
-.B \-\-result
-Output the final optimization result after completion. Can be combined
-with \-\-progress to show both steps and final result.
-
-.TP
 .B \-\-human\-readable
 Output human-readable text instead of JSON. This makes the output
 suitable for interactive use but harder to parse programmatically.
+
+.TP
+.B \-\-frequency\-response
+Output frequency response data after each filter step. This provides
+detailed frequency-domain information for analysis and visualization.
+
+.TP
+.B \-\-usable\-range\-only
+Only detect and output the usable frequency range, then exit. This is
+useful for preprocessing measurements to determine optimization boundaries.
+Requires only the measured_curve field in the input JSON.
 
 .TP
 .B \-h, \-\-help
@@ -49,23 +53,38 @@ The optimizer reads a JSON optimization job from stdin with the following struct
 {
   "measured_curve": {
     "frequencies": [20, 100, 1000, 10000, 20000],
-    "magnitudes": [-3, -1, 0, -2, -6]
+    "magnitudes_db": [-3, -1, 0, -2, -6]
   },
   "target_curve": {
     "name": "Harman",
     "description": "Harman target curve",
-    "expert": false,
-    "curve": [...]
+    "curve": [
+      {"frequency": 20, "target_db": 0.0},
+      {"frequency": 20000, "target_db": 0.0}
+    ]
   },
   "optimizer_params": {
     "name": "Default",
     "qmax": 10,
-    "maxdb": 12,
-    "mindb": -12,
-    "add_highpass": true
+    "maxdb": 6,
+    "mindb": -6,
+    "add_highpass": true,
+    "acceptable_error": 1.0,
+    "min_frequency": 50.0,
+    "max_frequency": 8000.0
   },
   "sample_rate": 48000,
-  "filter_count": 10
+  "filter_count": 5
+}
+.fi
+
+For usable range detection, only measured_curve is required:
+.nf
+{
+  "measured_curve": {
+    "frequencies": [20, 100, 1000, 10000, 20000],
+    "magnitudes_db": [-3, -1, 0, -2, -6]
+  }
 }
 .fi
 
@@ -75,34 +94,46 @@ Without \-\-human\-readable, all output is JSON for easy parsing:
 
 Progress steps (with \-\-progress):
 .nf
+{"type":"usable_frequency_range","frequency_range":{"low_hz":70.7,"high_hz":10000.0},"message":"Detected usable frequency range: 70.7 Hz - 10000.0 Hz"}
 {"step":1,"filters":[...],"residual_error":2.5,"message":"Added filter 1 at 1000Hz","progress_percent":10.0}
 .fi
 
-Final result (with \-\-result):
+Final result:
 .nf
-{"success":true,"filters":[...],"final_error":1.2,"original_error":3.8,"improvement_db":10.1,"processing_time_ms":150}
+{"success":true,"filters":[...],"final_error":1.2,"original_error":3.8,"improvement_db":10.1,"processing_time_ms":150,"usable_freq_low":70.7,"usable_freq_high":10000.0}
+.fi
+
+Usable range only (with \-\-usable\-range\-only):
+.nf
+{"usable_freq_low":70.7,"usable_freq_high":10000.0,"frequency_candidates":26,"optimization_frequencies":19,"message":"Detected usable frequency range: 70.7 Hz - 10000.0 Hz"}
 .fi
 
 .SS Human-readable Output
 With \-\-human\-readable, output is formatted for human consumption:
 
 .nf
+Usable frequency range: 70.7 Hz - 10000.0 Hz (26 frequency candidates)
 Step 1: Added filter 1 at 1000Hz (3.2dB) (Error: 2.5 dB, Progress: 10.0%)
   Added: PEQ 1000Hz Q=2.0 Gain=3.2dB
 
 === OPTIMIZATION RESULTS ===
 Success: true
 Filters created: 5
+Usable frequency range: 70.7 Hz - 10000.0 Hz
 Original error: 3.80 dB RMS
 Final error: 1.20 dB RMS
 Improvement: 10.1 dB
 Processing time: 150 ms
+
+Filters:
+  1: PEQ 1000Hz Q=2.0 Gain=3.2dB
+  2: PEQ 2000Hz Q=1.5 Gain=-2.1dB
 .fi
 
 .SH EXAMPLES
 .SS Basic optimization with JSON output
 .nf
-echo '{"measured_curve":...}' | roomeq-optimizer
+echo '{"measured_curve":...,"target_curve":...}' | roomeq-optimizer
 .fi
 
 .SS Interactive optimization with human-readable output
@@ -110,15 +141,31 @@ echo '{"measured_curve":...}' | roomeq-optimizer
 roomeq-optimizer --progress --human-readable < job.json
 .fi
 
-.SS Progress tracking only (useful for monitoring)
+.SS Detect usable frequency range only
 .nf
-cat optimization.json | roomeq-optimizer --progress
+echo '{"measured_curve":{"frequencies":[...],"magnitudes_db":[...]}}' | roomeq-optimizer --usable-range-only
 .fi
 
-.SS Silent operation (no output unless error)
+.SS Progress tracking with frequency response data
 .nf
-roomeq-optimizer < job.json
+roomeq-optimizer --progress --frequency-response < job.json
 .fi
+
+.SS Override frequency range in optimization
+.nf
+echo '{"measured_curve":...,"optimizer_params":{"min_frequency":50,"max_frequency":8000,...}}' | roomeq-optimizer
+.fi
+
+.SH FREQUENCY RANGE DETECTION
+The optimizer automatically detects the usable frequency range by analyzing
+signal levels relative to the average. Frequencies with levels more than 8dB
+below average are excluded from optimization.
+
+Override the detected range using optimizer_params:
+.IP \(bu 2
+min_frequency: Force lower frequency limit
+.IP \(bu 2
+max_frequency: Force upper frequency limit
 
 .SH EXIT STATUS
 .TP
@@ -136,97 +183,7 @@ For complete examples and Python integration, see /usr/share/doc/roomeq/rust/exa
 
 .SH AUTHOR
 HiFiBerry <support@hifiberry.com>
-.SH SYNOPSIS
-.B roomeq-optimizer
-< job_specification.json
-.SH DESCRIPTION
-.PP
-roomeq-optimizer is a high-performance Rust implementation of the room equalization
-optimizer. It provides 10-20x faster processing compared to the Python implementation
-while maintaining full compatibility with the same algorithms and filter types.
-.PP
-The optimizer reads a JSON job specification from stdin and outputs real-time
-progress information to stdout, with a final summary sent to stderr.
-.SH INPUT FORMAT
-The input JSON specification must contain:
-.IP \(bu 2
-measured_curve: Frequency response measurements
-.IP \(bu 2
-target_curve: Desired frequency response with weighting
-.IP \(bu 2
-optimizer_params: Optimization parameters (Q factors, gain limits, etc.)
-.IP \(bu 2
-sample_rate: Audio sample rate (typically 48000)
-.IP \(bu 2
-filter_count: Maximum number of filters to create
-.SH OUTPUT FORMAT
-.SS Stdout (Real-time Progress)
-JSON objects describing each optimization step:
-.IP \(bu 2
-step: Step number
-.IP \(bu 2
-filters: Current filter chain
-.IP \(bu 2
-corrected_response: Frequency response after correction
-.IP \(bu 2
-residual_error: Current RMS error in dB
-.IP \(bu 2
-message: Human-readable step description
-.IP \(bu 2
-progress_percent: Completion percentage
-.SS Stderr (Final Summary)
-Summary statistics including:
-.IP \(bu 2
-Success status
-.IP \(bu 2
-Total filters created
-.IP \(bu 2
-Original vs final error
-.IP \(bu 2
-Processing time
-.SH FILTER TYPES
-Supports all standard biquad filter types:
-.IP \(bu 2
-High-pass (hp): Subsonic filtering
-.IP \(bu 2
-Low-pass (lp): Anti-aliasing
-.IP \(bu 2
-Peaking EQ (eq): Precise frequency correction
-.IP \(bu 2
-Low shelf (ls): Bass region adjustment
-.IP \(bu 2
-High shelf (hs): Treble region adjustment
-.IP \(bu 2
-Notch: Narrow problem frequency removal
-.SH PERFORMANCE
-.IP \(bu 2
-Processing time: 1-10ms typical (vs 50-200ms Python)
-.IP \(bu 2
-Memory usage: ~2MB (vs ~50MB Python)
-.IP \(bu 2
-Same accuracy as Python implementation
-.SH EXAMPLES
-.PP
-Basic usage with example job:
-.IP
-cat /usr/share/doc/roomeq/rust/examples/example_job.json | roomeq-optimizer
-.PP
-Integration from Python:
-.IP
-python3 /usr/share/doc/roomeq/rust/examples/demo_rust_optimizer.py
-.SH FILES
-.IP /usr/bin/roomeq-optimizer
-Main executable
-.IP /usr/share/doc/roomeq/rust/README.md
-Detailed documentation
-.IP /usr/share/doc/roomeq/rust/examples/example_job.json
-Sample input specification
-.IP /usr/share/doc/roomeq/rust/examples/demo_rust_optimizer.py
-Python integration example
-.SH SEE ALSO
-.BR roomeq-server (1)
-.SH AUTHOR
-HiFiBerry <support@hifiberry.com>
+
 .SH COPYRIGHT
 Copyright (C) 2025 HiFiBerry. This is free software; see the source for
 copying conditions.
