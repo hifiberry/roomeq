@@ -640,8 +640,10 @@ impl RoomEQOptimizer {
         let mut steps = Vec::new();
         
         // Use provided parameters or create defaults
-        let target_curve = job.target_curve.as_ref().unwrap_or(&Self::create_default_target_curve());
-        let optimizer_params = job.optimizer_params.as_ref().unwrap_or(&Self::create_default_optimizer_params());
+        let default_target_curve = Self::create_default_target_curve();
+        let default_optimizer_params = Self::create_default_optimizer_params();
+        let target_curve = job.target_curve.as_ref().unwrap_or(&default_target_curve);
+        let optimizer_params = job.optimizer_params.as_ref().unwrap_or(&default_optimizer_params);
         
         // Generate optimization frequencies based on input data (twice as many)
         let frequencies = self.generate_optimization_frequencies(&job.measured_curve.frequencies);
