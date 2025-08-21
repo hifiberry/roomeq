@@ -22,17 +22,20 @@ pub struct CurvePoint {
 /// Target curve definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TargetCurve {
-    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub expert: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expert: Option<bool>,
     pub curve: Vec<CurvePoint>,
 }
 
 /// Optimizer preset parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizerPreset {
-    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub qmax: f64,

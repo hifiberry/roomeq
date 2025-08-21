@@ -64,8 +64,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.human_readable {
         info!("Optimization job received:");
         info!("  Measured curve: {} points", job.measured_curve.len());
-        info!("  Target curve: {}", job.target_curve.name);
-        info!("  Optimizer: {}", job.optimizer_params.name);
+        info!("  Target curve: {}", job.target_curve.name.as_deref().unwrap_or("Unnamed"));
+        info!("  Optimizer: {}", job.optimizer_params.name.as_deref().unwrap_or("Default"));
         info!("  Filter count: {}", job.filter_count);
         info!("  Sample rate: {}Hz", job.sample_rate);
     }

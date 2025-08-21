@@ -4,9 +4,6 @@
     "magnitudes_db": [1.2, 0.8, -2.1, -4.3, -3.8, -1.9, 0.2, 1.8, 3.2, 2.1, 0.9, -1.2, -2.8, -1.5, 0.3, 1.1, 0.7, 0.0, -0.8, -2.1, -1.3, 0.5, 1.8, 2.3, 1.2, -0.5, -2.1, -3.8, -5.2, -7.1, -9.3]
   },
   "target_curve": {
-    "name": "Weighted Flat Response",
-    "description": "Flat response with frequency-dependent correction weights",
-    "expert": true,
     "curve": [
       {"frequency": 20.0, "target_db": 0.0, "weight": [1.0, 0.3]},
       {"frequency": 100.0, "target_db": 0.0, "weight": [1.0, 0.6]},
@@ -18,8 +15,6 @@
     ]
   },
   "optimizer_params": {
-    "name": "Default",
-    "description": "Balanced optimization with moderate Q values",
     "qmax": 10.0,
     "mindb": -10.0,
     "maxdb": 3.0,
