@@ -1425,7 +1425,7 @@ Run high-performance EQ optimization using Rust backend with real-time streaming
 **Response-Type:** `text/plain` (Server-Sent Events stream)
 
 **Request Body:**
-The endpoint accepts a complete optimization job JSON object and passes it directly to the Rust optimizer without any processing. The JSON structure should match the Rust optimizer's expected format:
+The endpoint accepts optimization job JSON with flexible requirements - only the measured curve data is mandatory. All other fields are optional and will use intelligent defaults if not provided:
 
 ```json
 {
@@ -1446,7 +1446,9 @@ The endpoint accepts a complete optimization job JSON object and passes it direc
     "mindb": -12.0,
     "maxdb": 12.0,
     "add_highpass": true,
-    "acceptable_error": 0.5
+    "acceptable_error": 0.5,
+    "min_frequency": 50.0,
+    "max_frequency": 8000.0
   },
   "filter_count": 8,
   "sample_rate": 48000
@@ -1456,17 +1458,25 @@ The endpoint accepts a complete optimization job JSON object and passes it direc
 **Required Fields:**
 - `measured_curve.frequencies`: Array of frequency values in Hz
 - `measured_curve.magnitudes_db`: Array of magnitude values in dB (same length as frequencies)
-- `target_curve.curve`: Array of target curve points with frequency, target_db, and optional weight
-- `optimizer_params`: Optimization parameters (qmax, mindb, maxdb, add_highpass, acceptable_error)
-- `filter_count`: Number of filters to generate (1-20)
-- `sample_rate`: Audio sample rate
 
-**Optional Fields:**
-- `target_curve.name`: Human-readable name for the target curve
-- `target_curve.description`: Description of the target curve
-- `target_curve.expert`: Whether this is an expert-level curve
-- `optimizer_params.name`: Name of the optimizer preset  
-- `optimizer_params.description`: Description of the optimizer preset
+**Optional Fields (with intelligent defaults):**
+- `target_curve`: Target curve specification (default: flat 0dB response across detected usable range)
+  - `curve`: Array of target curve points with frequency, target_db, and optional weight
+  - `name`: Human-readable name for the target curve
+  - `description`: Description of the target curve
+  - `expert`: Whether this is an expert-level curve
+- `optimizer_params`: Optimization parameters (uses balanced defaults if omitted)
+  - `qmax`: Maximum Q factor (default: 10.0)
+  - `mindb`: Minimum gain adjustment in dB (default: -12.0)
+  - `maxdb`: Maximum gain adjustment in dB (default: 12.0)
+  - `add_highpass`: Whether to add high-pass filter (default: true)
+  - `acceptable_error`: Target error threshold (default: 0.5)
+  - `min_frequency`: Override lower frequency limit (Hz)
+  - `max_frequency`: Override upper frequency limit (Hz)
+  - `name`: Name of the optimizer preset
+  - `description`: Description of the optimizer preset
+- `filter_count`: Number of filters to generate (default: 6, range: 1-20)
+- `sample_rate`: Audio sample rate (default: 48000)
 
 **Weight System:**
 The weight field in target curve points supports:
@@ -1474,8 +1484,19 @@ The weight field in target curve points supports:
 - Single number (e.g., `1.5`): Apply same weight to boost and cut
 - Array `[positive, negative]` (e.g., `[1.0, 0.5]`): Different weights for boost vs cut
 
-**Example Request:**
+**Example Requests:**
 ```bash
+# Minimal request with just measured curve (uses all defaults)
+curl -X POST "http://localhost:10315/eq/optimize" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "measured_curve": {
+      "frequencies": [63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000],
+      "magnitudes_db": [2.1, 3.8, 4.2, 3.1, 1.9, 0.8, -0.5, -1.2, -0.8, 0.2, 1.5, 2.8, 3.2, 2.1, 0.9, -1.2, -2.8, -3.5, -2.9, -1.8, -0.5, 1.2, 2.5]
+    }
+  }'
+
+# Full request with custom target curve and optimizer parameters  
 curl -X POST "http://localhost:10315/eq/optimize" \
   -H "Content-Type: application/json" \
   -d '{
@@ -1494,7 +1515,9 @@ curl -X POST "http://localhost:10315/eq/optimize" \
       "mindb": -12.0,
       "maxdb": 12.0,
       "add_highpass": true,
-      "acceptable_error": 0.5
+      "acceptable_error": 0.5,
+      "min_frequency": 80.0,
+      "max_frequency": 8000.0
     },
     "filter_count": 6,
     "sample_rate": 48000

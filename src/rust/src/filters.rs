@@ -38,9 +38,13 @@ pub struct OptimizerPreset {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default = "default_qmax")]
     pub qmax: f64,
+    #[serde(default = "default_mindb")]
     pub mindb: f64,
+    #[serde(default = "default_maxdb")]
     pub maxdb: f64,
+    #[serde(default = "default_add_highpass")]
     pub add_highpass: bool,
     #[serde(default = "default_acceptable_error")]
     pub acceptable_error: f64,
@@ -48,6 +52,26 @@ pub struct OptimizerPreset {
     pub min_frequency: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_frequency: Option<f64>,
+}
+
+/// Default Q max is 10.0
+fn default_qmax() -> f64 {
+    10.0
+}
+
+/// Default minimum dB is -12.0
+fn default_mindb() -> f64 {
+    -12.0
+}
+
+/// Default maximum dB is 12.0
+fn default_maxdb() -> f64 {
+    12.0
+}
+
+/// Default add highpass is true
+fn default_add_highpass() -> bool {
+    true
 }
 
 /// Default acceptable error is 1.0 dB

@@ -1931,7 +1931,14 @@ def eq_optimizers():
 
 @app.route("/eq/optimize", methods=["POST"])
 def eq_optimize():
-    """Run EQ optimization from complete JSON job definition with streaming output."""
+    """Run EQ optimization with minimal requirements - only measured_curve data is mandatory.
+    
+    Accepts optimization job JSON where only 'measured_curve' is required. All other fields
+    (target_curve, optimizer_params, filter_count, sample_rate) are optional and will use
+    intelligent defaults if not provided.
+    
+    Returns streaming Server-Sent Events with real-time progress and results.
+    """
     from flask import Response
     
     # Extract the complete job JSON from the request
@@ -2022,7 +2029,14 @@ def eq_usable_range():
 
 @app.route("/", methods=["GET"])
 def root():
-    """Root endpoint with comprehensive API information."""
+    """Root endpoint with comprehensive API information.
+    
+    Provides complete documentation for all available endpoints including:
+    - EQ optimization with minimal requirements (only measured_curve data needed)
+    - Usable frequency range detection for preprocessing measurements
+    - Real-time streaming optimization with Server-Sent Events
+    - Frequency override capabilities for custom optimization boundaries
+    """
     return jsonify({
         "message": "RoomEQ Audio Processing API",
         "version": "0.6.0",
@@ -2331,15 +2345,15 @@ def root():
                 "optimize_from_fft": {
                     "method": "POST", 
                     "url": "/eq/optimize",
-                    "example": "curl -X POST http://localhost:10315/eq/optimize -H 'Content-Type: application/json' -d '{\"frequencies\":[20,25,31.5,...],\"magnitudes\":[-5.2,-3.1,-2.8,...],\"target_curve\":\"harman\",\"filter_count\":6}'",
+                    "example": "curl -X POST http://localhost:10315/eq/optimize -H 'Content-Type: application/json' -d '{\"measured_curve\":{\"frequencies\":[20,25,31.5,...],\"magnitudes_db\":[-5.2,-3.1,-2.8,...]}}'",
                     "response": "Server-Sent Events stream with real-time progress and final results",
                     "parameters": {
-                        "frequencies": "Array of frequency values in Hz",
-                        "magnitudes": "Array of magnitude values in dB (same length as frequencies)",
-                        "target_curve": "Target response curve name",
-                        "optimizer_preset": "Optimization style name",
-                        "filter_count": "Number of filters to generate",
-                        "sample_rate": "Audio sample rate (default: 48000)"
+                        "measured_curve.frequencies": "Array of frequency values in Hz (REQUIRED)",
+                        "measured_curve.magnitudes_db": "Array of magnitude values in dB, same length as frequencies (REQUIRED)",
+                        "target_curve": "Optional target response curve definition",
+                        "optimizer_params": "Optional optimization parameters with min_frequency/max_frequency overrides (uses defaults if omitted)",
+                        "filter_count": "Optional number of filters to generate (default: 6)",
+                        "sample_rate": "Optional audio sample rate (default: 48000)"
                     }
                 },
                 "usable_frequency_range": {
