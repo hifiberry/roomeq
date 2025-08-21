@@ -2011,12 +2011,12 @@ def eq_usable_range():
         return jsonify({
             "success": True,
             "usable_frequency_range": {
-                "low_hz": result.usable_freq_low,
-                "high_hz": result.usable_freq_high
+                "low_hz": result["usable_freq_low"],
+                "high_hz": result["usable_freq_high"]
             },
-            "frequency_candidates": result.frequency_candidates,
-            "optimization_frequencies": result.optimization_frequencies,
-            "message": result.message
+            "frequency_candidates": result["frequency_candidates"],
+            "optimization_frequencies": result["optimization_frequencies"],
+            "message": result["message"]
         })
         
     except RustOptimizerError as e:
