@@ -16,9 +16,8 @@ struct Args {
     #[arg(long)]
     progress: bool,
 
-    /// Output final result after optimization
-    #[arg(long)]
-    result: bool,
+    // Output final result after optimization (always enabled)
+    // Removed --result flag; always true
 
     /// Output human-readable text instead of JSON
     #[arg(long)]
@@ -77,8 +76,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Run optimization
     let result = optimizer.optimize(job);
 
-    // Output final result if requested
-    if args.result {
+    // Output final result (always enabled)
+    {
         if args.human_readable {
             println!("\n=== OPTIMIZATION RESULTS ===");
             println!("Success: {}", result.success);

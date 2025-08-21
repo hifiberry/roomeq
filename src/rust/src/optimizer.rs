@@ -34,6 +34,7 @@ pub struct OptimizationResult {
     pub final_error: f64,
     pub original_error: f64,
     pub improvement_db: f64,
+    #[serde(skip_serializing)]
     pub steps: Vec<OptimizationStep>,
     pub processing_time_ms: u64,
     pub error_message: Option<String>,
@@ -515,13 +516,39 @@ impl RoomEQOptimizer {
             .collect()
     }
 
+    /// Generate optimization frequencies based on input data - twice as many frequencies
+    /// with one interpolated frequency between each pair of input frequencies
+    fn generate_optimization_frequencies(&self, input_frequencies: &[f64]) -> Vec<f64> {
+        let mut frequencies = Vec::new();
+        
+        // Add all original frequencies
+        for &freq in input_frequencies {
+            frequencies.push(freq);
+        }
+        
+        // Add interpolated frequencies between each pair (geometric mean for log spacing)
+        for i in 0..input_frequencies.len() - 1 {
+            let f1 = input_frequencies[i];
+            let f2 = input_frequencies[i + 1];
+            
+            // Use geometric mean for proper log spacing
+            let f_interp = (f1 * f2).sqrt();
+            frequencies.push(f_interp);
+        }
+        
+        // Sort the frequencies
+        frequencies.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        
+        frequencies
+    }
+
     /// Optimize EQ filters using a brute-force approach with weighted error calculation
     pub fn optimize(&self, job: OptimizationJob) -> OptimizationResult {
         let start_time = std::time::Instant::now();
         let mut steps = Vec::new();
         
-        // Generate optimization frequencies
-        let frequencies = self.generate_frequencies(200);
+        // Generate optimization frequencies based on input data (twice as many)
+        let frequencies = self.generate_optimization_frequencies(&job.measured_curve.frequencies);
         
         // Generate target response
         let target_response = self.generate_target_response(&job.target_curve, &frequencies);

@@ -120,6 +120,7 @@ pub struct BiquadFilter {
     pub gain_db: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing)]
     pub coefficients: BiquadCoefficients,
 }
 
@@ -231,9 +232,7 @@ impl BiquadFilter {
         match self.filter_type.as_str() {
             "hp" => format!("hp:{:.1}:{:.3}", self.frequency, self.q),
             "eq" => format!("eq:{:.1}:{:.3}:{:.2}", self.frequency, self.q, self.gain_db),
-            _ => format!("coeff:{:.6}:{:.6}:{:.6}:{:.6}:{:.6}:{:.6}", 
-                        self.coefficients.a[0], self.coefficients.a[1], self.coefficients.a[2],
-                        self.coefficients.b[0], self.coefficients.b[1], self.coefficients.b[2]),
+            _ => format!("{}:{:.1}:{:.3}:{:.2}", self.filter_type, self.frequency, self.q, self.gain_db),
         }
     }
 }
