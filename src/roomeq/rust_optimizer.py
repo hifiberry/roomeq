@@ -313,7 +313,7 @@ class RustOptimizer:
     
     def _run_optimizer_streaming(self, job_file: str) -> Iterator[Dict[str, Any]]:
         """Run the Rust optimizer with streaming output."""
-        cmd = [self.binary_path, "--progress", "--result", "--frequency-response"]
+        cmd = [self.binary_path, "--progress", "--frequency-response"]
         logger.info(f"Executing command: {' '.join(cmd)}")
         logger.info(f"Using job file: {job_file}")
         
