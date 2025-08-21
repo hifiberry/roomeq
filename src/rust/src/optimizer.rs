@@ -486,6 +486,52 @@ impl RoomEQOptimizer {
         }
     }
 
+    /// Calculate weighted RMS error with acceptable error threshold applied, 
+    /// but only for frequencies within the specified range
+    pub fn calculate_error_within_range(&self, frequencies: &[f64], measured: &[f64], target: &[f64], weights: &[f64], acceptable_error: f64, f_min: f64, f_max: f64) -> f64 {
+        assert_eq!(frequencies.len(), measured.len());
+        assert_eq!(measured.len(), target.len());
+        assert_eq!(measured.len(), weights.len());
+        
+        let mut weighted_sum_sq = 0.0;
+        let mut total_weight = 0.0;
+
+        for i in 0..measured.len() {
+            let freq = frequencies[i];
+            
+            // Only include frequencies within the specified range
+            if freq < f_min || freq > f_max {
+                continue;
+            }
+
+            let raw_error = measured[i] - target[i];
+            
+            // Apply acceptable error threshold
+            // If error magnitude is within acceptable range, reduce it
+            let adjusted_error = if raw_error.abs() <= acceptable_error {
+                // Error within acceptable range becomes 0
+                0.0
+            } else {
+                // Error above acceptable threshold: subtract acceptable_error from magnitude, preserve sign
+                if raw_error > 0.0 {
+                    raw_error - acceptable_error
+                } else {
+                    raw_error + acceptable_error
+                }
+            };
+            
+            let weight = weights[i];
+            weighted_sum_sq += (adjusted_error * adjusted_error) * weight;
+            total_weight += weight;
+        }
+
+        if total_weight > 0.0 {
+            (weighted_sum_sq / total_weight).sqrt()
+        } else {
+            0.0
+        }
+    }
+
     /// Find usable frequency range for optimization (similar to Python version)
     pub fn find_usable_range(&self, frequencies: &[f64], magnitudes: &[f64]) -> (usize, usize, f64, f64) {
         let min_db = -8.0;
@@ -709,8 +755,8 @@ impl RoomEQOptimizer {
         let target_weights = self.generate_target_weights(target_curve, &frequencies, 
                                                         &measured_response, &target_response);
 
-        // Calculate original error (with acceptable error threshold)
-        let original_error = self.calculate_error_with_acceptable_threshold(&measured_response, &target_response, &target_weights, optimizer_params.acceptable_error);
+        // Calculate original error (with acceptable error threshold) - only within usable range
+        let original_error = self.calculate_error_within_range(&frequencies, &measured_response, &target_response, &target_weights, optimizer_params.acceptable_error, f_low, f_high);
         
         let mut filters = Vec::new();
         let mut current_response = measured_response.clone();
@@ -734,7 +780,7 @@ impl RoomEQOptimizer {
             // Recalculate weights for updated response
             let updated_weights = self.generate_target_weights(target_curve, &frequencies, 
                                                              &current_response, &target_response);
-            let error = self.calculate_error_with_acceptable_threshold(&current_response, &target_response, &updated_weights, optimizer_params.acceptable_error);
+            let error = self.calculate_error_within_range(&frequencies, &current_response, &target_response, &updated_weights, optimizer_params.acceptable_error, f_low, f_high);
             let step = OptimizationStep {
                 step: 0,
                 filters: filters.clone(),
@@ -770,7 +816,7 @@ impl RoomEQOptimizer {
             // Update weights for current response before calculating error
             let current_weights = self.generate_target_weights(target_curve, &frequencies, 
                                                              &current_response, &target_response);
-            let mut best_error = self.calculate_error_with_acceptable_threshold(&current_response, &target_response, &current_weights, optimizer_params.acceptable_error);
+            let mut best_error = self.calculate_error_within_range(&frequencies, &current_response, &target_response, &current_weights, optimizer_params.acceptable_error, f_low, f_high);
             let mut best_response = current_response.clone();
             
             // Define search ranges - limit frequencies to usable range, add interpolated frequencies
@@ -808,7 +854,7 @@ impl RoomEQOptimizer {
                         // Calculate weights for the test response and check error
                         let test_weights = self.generate_target_weights(target_curve, &frequencies, 
                                                                       &test_response, &target_response);
-                        let test_error = self.calculate_error_with_acceptable_threshold(&test_response, &target_response, &test_weights, optimizer_params.acceptable_error);
+                        let test_error = self.calculate_error_within_range(&frequencies, &test_response, &target_response, &test_weights, optimizer_params.acceptable_error, f_low, f_high);
                         
                         if test_error < best_error {
                             best_error = test_error;
@@ -855,10 +901,10 @@ impl RoomEQOptimizer {
             }
         }
 
-        // Calculate final weighted error
+        // Calculate final weighted error - only within usable range
         let final_weights = self.generate_target_weights(target_curve, &frequencies, 
                                                        &current_response, &target_response);
-        let final_error = self.calculate_error_with_acceptable_threshold(&current_response, &target_response, &final_weights, optimizer_params.acceptable_error);
+        let final_error = self.calculate_error_within_range(&frequencies, &current_response, &target_response, &final_weights, optimizer_params.acceptable_error, f_low, f_high);
         let improvement_db = 20.0 * (original_error / final_error.max(1e-10)).log10();
         let processing_time = start_time.elapsed().as_millis() as u64;
 
