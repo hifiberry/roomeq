@@ -1972,6 +1972,54 @@ def eq_optimize():
     )
 
 
+@app.route("/eq/usable-range", methods=["POST"])
+def eq_usable_range():
+    """Calculate usable frequency range from measured curve data."""
+    
+    # Extract the request data
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json"}), 400
+    
+    job_data = request.get_json()
+    
+    try:
+        # Validate that we have at least measured_curve
+        if not job_data or 'measured_curve' not in job_data:
+            return jsonify({"error": "measured_curve is required"}), 400
+        
+        measured_curve = job_data['measured_curve']
+        if 'frequencies' not in measured_curve or 'magnitudes_db' not in measured_curve:
+            return jsonify({"error": "measured_curve must contain 'frequencies' and 'magnitudes_db'"}), 400
+        
+        # Import the Rust optimizer here to avoid circular import
+        from .rust_optimizer import RustOptimizer
+        
+        # Create optimizer instance
+        sample_rate = job_data.get('sample_rate', 48000.0)
+        optimizer = RustOptimizer()
+        
+        # Detect usable frequency range using the Rust binary
+        result = optimizer.detect_usable_range(job_data)
+        
+        return jsonify({
+            "success": True,
+            "usable_frequency_range": {
+                "low_hz": result.usable_freq_low,
+                "high_hz": result.usable_freq_high
+            },
+            "frequency_candidates": result.frequency_candidates,
+            "optimization_frequencies": result.optimization_frequencies,
+            "message": result.message
+        })
+        
+    except RustOptimizerError as e:
+        logger.error(f"Rust optimizer error in usable range detection: {e}")
+        return jsonify({"error": f"Usable range detection failed: {str(e)}"}), 500
+    except Exception as e:
+        logger.error(f"Error in usable range detection: {e}")
+        return jsonify({"error": f"Usable range detection failed: {str(e)}"}), 500
+
+
 @app.route("/", methods=["GET"])
 def root():
     """Root endpoint with comprehensive API information."""
@@ -2041,7 +2089,8 @@ def root():
             "eq_optimization": {
                 "/eq/presets/targets": "List available target response curves",
                 "/eq/presets/optimizers": "List available optimizer configurations", 
-                "/eq/optimize": "Run EQ optimization with streaming results (no start/stop needed)"
+                "/eq/optimize": "Run EQ optimization with streaming results (no start/stop needed)",
+                "/eq/usable-range": "Calculate usable frequency range from measured curve data"
             }
         },
         "usage_examples": {
@@ -2291,6 +2340,17 @@ def root():
                         "optimizer_preset": "Optimization style name",
                         "filter_count": "Number of filters to generate",
                         "sample_rate": "Audio sample rate (default: 48000)"
+                    }
+                },
+                "usable_frequency_range": {
+                    "method": "POST",
+                    "url": "/eq/usable-range", 
+                    "example": "curl -X POST http://localhost:10315/eq/usable-range -H 'Content-Type: application/json' -d '{\"measured_curve\":{\"frequencies\":[20,25,31.5,...],\"magnitudes_db\":[-5.2,-3.1,-2.8,...]}}'",
+                    "response": "JSON object with usable frequency range information",
+                    "parameters": {
+                        "measured_curve": "Required: Object with 'frequencies' and 'magnitudes_db' arrays",
+                        "optimizer_params": "Optional: Object with min_frequency and max_frequency overrides",
+                        "sample_rate": "Optional: Audio sample rate (default: 48000)"
                     }
                 }
             }

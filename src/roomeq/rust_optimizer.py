@@ -35,7 +35,13 @@ class RustOptimizer:
             "/usr/bin/roomeq-optimizer",
             "/usr/local/bin/roomeq-optimizer",
             Path(__file__).parent.parent.parent / "rust" / "target" / "release" / "roomeq-optimizer",
-            Path(__file__).parent.parent.parent / "rust" / "target" / "debug" / "roomeq-optimizer"
+            Path(__file__).parent.parent.parent / "rust" / "target" / "debug" / "roomeq-optimizer",
+            # Additional paths for development
+            Path(__file__).parent.parent.parent.parent / "src" / "rust" / "target" / "release" / "roomeq-optimizer",
+            Path(__file__).parent.parent.parent.parent / "src" / "rust" / "target" / "debug" / "roomeq-optimizer",
+            # Direct relative path from current working directory
+            Path("src/rust/target/release/roomeq-optimizer"),
+            Path("src/rust/target/debug/roomeq-optimizer")
         ]
         
         for path in possible_paths:
@@ -47,6 +53,87 @@ class RustOptimizer:
             f"Rust optimizer binary not found. Tried: {possible_paths}. "
             "Please build the Rust optimizer with 'cargo build --release'"
         )
+
+    def detect_usable_range(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Detect usable frequency range from measured curve data.
+        
+        Args:
+            job_data: Job data containing at least measured_curve
+            
+        Returns:
+            Dictionary containing usable frequency range information
+        """
+        logger.info("Detecting usable frequency range with Rust optimizer")
+        start_time = time.time()
+        
+        # Create temporary job file
+        job_file = None
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                json.dump(job_data, f, indent=2)
+                job_file = f.name
+            
+            # Run the Rust optimizer with --usable-range-only flag
+            cmd = [self.binary_path, "--usable-range-only"]
+            logger.info(f"Executing command: {' '.join(cmd)}")
+            logger.info(f"Using job file: {job_file}")
+            
+            # Start process
+            process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                bufsize=0  # Unbuffered
+            )
+            
+            logger.info(f"Subprocess started with PID: {process.pid}")
+            
+            # Send job data to stdin
+            with open(job_file, 'r') as f:
+                job_data_str = f.read()
+            
+            # Wait for process completion and get output
+            stdout, stderr = process.communicate(input=job_data_str)
+            return_code = process.returncode
+            
+            logger.info(f"Process completed with return code: {return_code}")
+            
+            if return_code == 0:
+                # Parse JSON output
+                try:
+                    result = json.loads(stdout.strip())
+                    logger.info(f"Usable range detection completed in {time.time() - start_time:.2f} seconds")
+                    return result
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse JSON output: {e}")
+                    logger.error(f"Raw output: {stdout}")
+                    raise RustOptimizerError(f"Failed to parse usable range result: {e}")
+            else:
+                # Process failed
+                logger.error(f"Usable range detection failed with code {return_code}")
+                if stderr:
+                    logger.error(f"Stderr: {stderr}")
+                
+                error_msg = f"Usable range detection failed with code {return_code}"
+                if stderr.strip():
+                    error_msg += f": {stderr.strip()}"
+                    
+                raise RustOptimizerError(error_msg)
+                
+        except Exception as e:
+            logger.error(f"Error during usable range detection: {e}")
+            raise RustOptimizerError(f"Usable range detection failed: {e}")
+        finally:
+            # Clean up temporary file
+            if job_file and os.path.exists(job_file):
+                try:
+                    os.unlink(job_file)
+                    logger.debug(f"Cleaned up temporary job file: {job_file}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean up job file {job_file}: {e}")
 
     def optimize_streaming_json(self, job_data: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
         """
