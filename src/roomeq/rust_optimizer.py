@@ -378,8 +378,7 @@ class RustOptimizer:
             
             logger.info("Starting to process optimizer output...")
             
-            # Process output line by line
-            error_detected = False
+            # Process output line by line - just pass through without parsing
             while True:
                 line = process.stdout.readline()
                 if not line and process.poll() is not None:
@@ -395,225 +394,38 @@ class RustOptimizer:
                     continue
                     
                 lines_processed += 1
-                all_output_lines.append(line)  # Store all lines for error diagnosis
                 
-                # Log all output lines for debugging (especially important for errors)
+                # Log all output lines for debugging
                 logger.info(f"Rust optimizer output line {lines_processed}: {line}")
                 
                 # Check if process exited early
                 if process.poll() is not None and process.returncode != 0:
                     logger.warning(f"Process exited early with code {process.returncode} after {lines_processed} lines")
                     logger.error(f"Last output line before failure: {line}")
-                    error_detected = True
-                
-                # Try to parse as JSON first (new combined format)
-                try:
-                    data = json.loads(line)
-                    logger.debug(f"Parsed JSON data with keys: {list(data.keys())}")
-                    
-                    # Check if it's an error message
-                    if data.get("type") == "error":
-                        error_message = data.get("message", "Unknown error from Rust optimizer")
-                        logger.error(f"Rust optimizer reported error: {error_message}")
-                        yield {
-                            "type": "error",
-                            "optimization_id": optimization_id,
-                            "message": f"Rust optimizer error: {error_message}",
-                            "details": data,
-                            "timestamp": time.time()
-                        }
-                        # Continue processing to see if there are more details, don't break here
-                    
-                    # Check if it's a step with optional frequency response
-                    elif "step" in data and "filters" in data:
-                        # Update our filter list to match the step data
-                        if len(data["filters"]) > len(filters):
-                            # New filter added
-                            new_filter = data["filters"][-1]  # Get the newest filter
-                            filters = data["filters"].copy()  # Update our filter list
-                            
-                            filter_event = {
-                                "type": "filter_added", 
-                                "optimization_id": optimization_id,
-                                "step": step_number,
-                                "message": data.get("message", f"Added filter at step {data['step']}"),
-                                "filter": new_filter,
-                                "total_filters": len(filters),
-                                "current_filter_set": filters.copy(),
-                                "progress": data.get("progress_percent", 0.0),
-                                "timestamp": time.time()
-                            }
-                            
-                            # Add frequency response if included
-                            if "frequency_response" in data:
-                                filter_event["frequency_response"] = {
-                                    "frequencies": data["frequency_response"]["frequencies"],
-                                    "magnitude_db": data["frequency_response"]["magnitude_db"],
-                                    "phase_degrees": data["frequency_response"].get("phase_degrees", [])
-                                }
-                            
-                            yield filter_event
-                            step_number += 1
-                    
-                    # Check if it's a standalone frequency response (final result)
-                    elif data.get("event") == "frequency_response_final":
-                        yield {
-                            "type": "frequency_response",
-                            "optimization_id": optimization_id, 
-                            "step": -1,
-                            "message": "Final frequency response",
-                            "current_filter_set": data.get("current_filter_set", filters.copy()),
-                            "total_filters": len(data.get("current_filter_set", filters)),
-                            "frequency_response": {
-                                "frequencies": data["frequencies"],
-                                "magnitude_db": data["magnitude_db"], 
-                                "phase_degrees": data.get("phase_degrees", [])
-                            },
-                            "timestamp": time.time()
-                        }
-                    
-                    continue  # Successfully parsed as JSON, skip legacy parsing
-                    
-                except (json.JSONDecodeError, KeyError):
-                    # Not JSON or missing required fields, try legacy parsing
-                    logger.debug(f"Line is not valid JSON, trying legacy parsing: {line[:50]}...")
-                    pass
-                # Legacy parsing for non-JSON output
-                if line.startswith("Usable frequency range:"):
-                    # Extract frequency range
-                    parts = line.split()
-                    try:
-                        f_low = float(parts[3])
-                        f_high = float(parts[6])
-                        candidates = int(parts[8].rstrip(')'))
-                        usable_range = (f_low, f_high, candidates)
-                        
-                        yield {
-                            "type": "initialization",
-                            "optimization_id": optimization_id,
-                            "step": step_number,
-                            "message": f"Detected usable frequency range: {f_low:.1f} - {f_high:.1f} Hz ({candidates} candidates)",
-                            "usable_range": {"f_low": f_low, "f_high": f_high, "candidates": candidates},
-                            "progress": 0.0,
-                            "timestamp": time.time()
-                        }
-                        step_number += 1
-                    except (ValueError, IndexError):
-                        continue
-                
-                elif line.startswith("Step "):
-                    # Parse optimization step
-                    try:
-                        # Example: "Step 1: Added filter 1 at 16000.0Hz, Q=0.5, 3.0dB (Error: 2.62 dB, Progress: 0.0%)"
-                        if "Added" in line and "filter" in line:
-                            parts = line.split()
-                            step_idx = int(parts[1].rstrip(':'))
-                            
-                            # Extract filter details
-                            filter_info = self._parse_filter_line(line)
-                            if filter_info:
-                                filters.append(filter_info)
-                                
-                                yield {
-                                    "type": "filter_added",
-                                    "optimization_id": optimization_id,
-                                    "step": step_number,
-                                    "message": line,
-                                    "filter": filter_info,
-                                    "total_filters": len(filters),
-                                    "current_filter_set": filters.copy(),  # Full list of all filters up to this point
-                                    "progress": min(95.0, (len(filters) / 10) * 100),  # Estimate progress
-                                    "timestamp": time.time()
-                                }
-                                step_number += 1
-                    except (ValueError, IndexError):
-                        continue
-                
-                elif line.startswith("FREQUENCY_RESPONSE:"):
-                    # Parse frequency response data from Rust optimizer
-                    try:
-                        # Expected format: "FREQUENCY_RESPONSE:step_N:{json_data}"
-                        parts = line.split(":", 2)
-                        if len(parts) >= 3:
-                            step_info = parts[1]  # e.g., "step_0"
-                            response_data = json.loads(parts[2])
-                            
-                            # Extract step number from step_info
-                            step_match = step_info.replace('step_', '')
-                            try:
-                                response_step = int(step_match)
-                            except ValueError:
-                                response_step = step_number
-                            
-                            yield {
-                                "type": "frequency_response", 
-                                "optimization_id": optimization_id,
-                                "step": response_step,
-                                "message": f"Frequency response calculated after step {response_step + 1}",
-                                "current_filter_set": filters.copy(),  # Include current filter set
-                                "total_filters": len(filters),
-                                "frequency_response": {
-                                    "frequencies": response_data["frequencies"],
-                                    "magnitude_db": response_data["magnitude_db"],
-                                    "phase_degrees": response_data.get("phase_degrees", [])
-                                },
-                                "timestamp": time.time()
-                            }
-                    except (ValueError, json.JSONDecodeError, KeyError) as e:
-                        logger.warning(f"Could not parse frequency response data: {e}")
-                        continue
-                
-                elif "Added:" in line:
-                    # Filter format line: "  Added: eq:16000.0:0.500:3.00"
-                    try:
-                        filter_str = line.split("Added:")[1].strip()
-                        filter_parts = filter_str.split(':')
-                        
-                        if len(filter_parts) >= 4 and filter_parts[0] in ['eq', 'hp']:
-                            filter_type = "high_pass" if filter_parts[0] == 'hp' else "peaking_eq"
-                            frequency = float(filter_parts[1])
-                            q = float(filter_parts[2])
-                            gain_db = float(filter_parts[3]) if len(filter_parts) > 3 else 0.0
-                            
-                            # Update the last filter with detailed info
-                            if filters:
-                                filters[-1].update({
-                                    "text_format": filter_str,
-                                    "coefficients": None  # Could calculate if needed
-                                })
-                    except (ValueError, IndexError):
-                        continue
-                
-                elif line.startswith("=== OPTIMIZATION RESULTS ==="):
-                    # Final results section - start parsing
-                    final_result = self._parse_final_results(process.stdout, filters, usable_range)
-                    
-                    if final_result:
-                        yield {
-                            "type": "completed",
-                            "optimization_id": optimization_id,
-                            "step": step_number,
-                            "message": "Optimization completed successfully",
-                            "result": final_result,
-                            "progress": 100.0,
-                            "processing_time": time.time() - start_time,
-                            "timestamp": time.time()
-                        }
                     break
                 
-                # If we detected an error and the process has finished, break early
-                if error_detected and process.poll() is not None:
-                    logger.warning("Breaking output processing loop due to detected error and process termination")
-                    break
+                # Just yield the raw line as a simple message
+                yield {
+                    "type": "output",
+                    "line": line,
+                    "line_number": lines_processed
+                }
             
-            # Check for errors
-            return_code = process.poll()  # Non-blocking check
+            # Wait for process to complete
+            return_code = process.poll()
             if return_code is None:
-                return_code = process.wait()  # Wait for completion
+                return_code = process.wait()
                 
             logger.info(f"Process completed with return code: {return_code}")
             
-            if return_code != 0:
+            if return_code == 0:
+                logger.info(f"Optimization completed successfully after processing {lines_processed} lines")
+                yield {
+                    "type": "completed",
+                    "message": "Optimization completed successfully",
+                    "lines_processed": lines_processed
+                }
+            else:
                 # Try to read any remaining stderr
                 stderr_output = ""
                 try:
@@ -623,78 +435,14 @@ class RustOptimizer:
                     logger.warning(f"Failed to read stderr: {stderr_error}")
                     
                 logger.error(f"Optimizer failed with code {return_code}")
-                logger.error(f"Stderr output: '{stderr_output}'")
-                logger.error(f"Total lines processed: {lines_processed}")
-                logger.error(f"All stdout output lines received:")
-                for i, output_line in enumerate(all_output_lines, 1):
-                    logger.error(f"  Line {i}: {output_line}")
-                logger.error(f"Command was: {' '.join(cmd)}")
-                logger.error(f"Job file: {job_file}")
+                if stderr_output:
+                    logger.error(f"Stderr output: '{stderr_output}'")
                 
-                # Try to get more diagnostic info by testing the binary
-                try:
-                    logger.info("Testing Rust binary with --help to check if it's working...")
-                    help_result = subprocess.run([self.binary_path, "--help"], 
-                                               capture_output=True, text=True, timeout=5)
-                    logger.info(f"Binary help test - return code: {help_result.returncode}")
-                    if help_result.stdout:
-                        logger.info(f"Binary help stdout: {help_result.stdout[:200]}...")
-                    if help_result.stderr:
-                        logger.info(f"Binary help stderr: {help_result.stderr[:200]}...")
-                except Exception as help_error:
-                    logger.error(f"Failed to test binary with --help: {help_error}")
-                
-                # Try to validate the job file content
-                try:
-                    logger.info("Checking job file content for diagnostic purposes...")
-                    with open(job_file, 'r') as f:
-                        job_content = f.read()
-                    logger.info(f"Job file size: {len(job_content)} bytes")
+                error_msg = f"Rust optimizer failed with code {return_code}"
+                if stderr_output.strip():
+                    error_msg += f": {stderr_output.strip()}"
                     
-                    # Parse and validate JSON
-                    job_data = json.loads(job_content)
-                    logger.info(f"Job data keys: {list(job_data.keys())}")
-                    if 'measured_curve' in job_data:
-                        measured = job_data['measured_curve']
-                        logger.info(f"Measured curve: {len(measured.get('frequencies', []))} frequencies")
-                    if 'target_curve' in job_data:
-                        target = job_data['target_curve'] 
-                        logger.info(f"Target curve: {len(target.get('frequencies', []))} frequencies")
-                    logger.info(f"Filter count: {job_data.get('filter_count', 'unknown')}")
-                    logger.info(f"Sample rate: {job_data.get('sample_rate', 'unknown')}")
-                except Exception as job_error:
-                    logger.error(f"Failed to validate job file: {job_error}")
-                
-                # Extract actual error messages from output lines
-                rust_error_messages = []
-                for output_line in all_output_lines:
-                    try:
-                        # Try to parse as JSON to extract error messages
-                        line_data = json.loads(output_line)
-                        if line_data.get("type") == "error":
-                            error_msg = line_data.get("message", output_line)
-                            rust_error_messages.append(error_msg)
-                    except json.JSONDecodeError:
-                        # If not JSON, check if line contains error keywords (but exclude normal status messages)
-                        line_lower = output_line.lower().strip()
-                        if (any(error_word in line_lower for error_word in ['error:', 'failed:', 'panic!', 'abort:', 'fatal:']) 
-                            and not line_lower.startswith('step ') 
-                            and not 'progress:' in line_lower):
-                            rust_error_messages.append(output_line)
-                
-                # Construct comprehensive error message
-                if rust_error_messages:
-                    error_details = "; ".join(rust_error_messages)
-                    error_msg = f"Rust optimizer failed with code {return_code}: {error_details}"
-                elif stderr_output.strip():
-                    error_msg = f"Rust optimizer failed with code {return_code}: {stderr_output.strip()}"
-                else:
-                    error_msg = f"Rust optimizer failed with code {return_code} (no error message available)"
-                    
-                logger.error(f"Final error message: {error_msg}")
                 raise RustOptimizerError(error_msg)
-            else:
-                logger.info(f"Optimization completed successfully after processing {lines_processed} lines")
         
         except subprocess.SubprocessError as e:
             logger.error(f"Subprocess error: {e}")
