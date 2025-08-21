@@ -110,6 +110,7 @@ impl RoomEQOptimizer {
             acceptable_error: 1.0,
             min_frequency: None,
             max_frequency: None,
+            interpolate_frequencies: false,
         }
     }
 
@@ -612,9 +613,9 @@ impl RoomEQOptimizer {
             .collect()
     }
 
-    /// Generate optimization frequencies based on input data - twice as many frequencies
-    /// with one interpolated frequency between each pair of input frequencies
-    fn generate_optimization_frequencies(&self, input_frequencies: &[f64]) -> Vec<f64> {
+    /// Generate optimization frequencies based on input data 
+    /// If interpolate_frequencies is true, adds one interpolated frequency between each pair of input frequencies
+    fn generate_optimization_frequencies(&self, input_frequencies: &[f64], interpolate_frequencies: bool) -> Vec<f64> {
         let mut frequencies = Vec::new();
         
         // Add all original frequencies
@@ -622,14 +623,16 @@ impl RoomEQOptimizer {
             frequencies.push(freq);
         }
         
-        // Add interpolated frequencies between each pair (geometric mean for log spacing)
-        for i in 0..input_frequencies.len() - 1 {
-            let f1 = input_frequencies[i];
-            let f2 = input_frequencies[i + 1];
-            
-            // Use geometric mean for proper log spacing
-            let f_interp = (f1 * f2).sqrt();
-            frequencies.push(f_interp);
+        // Add interpolated frequencies between each pair (geometric mean for log spacing) only if requested
+        if interpolate_frequencies {
+            for i in 0..input_frequencies.len() - 1 {
+                let f1 = input_frequencies[i];
+                let f2 = input_frequencies[i + 1];
+                
+                // Use geometric mean for proper log spacing
+                let f_interp = (f1 * f2).sqrt();
+                frequencies.push(f_interp);
+            }
         }
         
         // Sort the frequencies
@@ -640,8 +643,12 @@ impl RoomEQOptimizer {
 
     /// Detect usable frequency range without running full optimization
     pub fn detect_usable_range(&self, job: OptimizationJob) -> UsableRangeResult {
-        // Generate optimization frequencies based on input data (twice as many)
-        let frequencies = self.generate_optimization_frequencies(&job.measured_curve.frequencies);
+        // Use provided parameters or create defaults
+        let default_optimizer_params = Self::create_default_optimizer_params();
+        let optimizer_params = job.optimizer_params.as_ref().unwrap_or(&default_optimizer_params);
+        
+        // Generate optimization frequencies based on input data (with optional interpolation)
+        let frequencies = self.generate_optimization_frequencies(&job.measured_curve.frequencies, optimizer_params.interpolate_frequencies);
         
         // Interpolate measured response to optimization frequencies
         let measured_response: Vec<f64> = frequencies.iter()
@@ -652,13 +659,8 @@ impl RoomEQOptimizer {
         let (_low_idx, _high_idx, f_low_detected, f_high_detected) = self.find_usable_range(&frequencies, &measured_response);
 
         // Check for frequency overrides in optimizer params
-        let (f_low, f_high) = if let Some(ref params) = job.optimizer_params {
-            let f_low = params.min_frequency.unwrap_or(f_low_detected);
-            let f_high = params.max_frequency.unwrap_or(f_high_detected);
-            (f_low, f_high)
-        } else {
-            (f_low_detected, f_high_detected)
-        };
+        let f_low = optimizer_params.min_frequency.unwrap_or(f_low_detected);
+        let f_high = optimizer_params.max_frequency.unwrap_or(f_high_detected);
 
         // Calculate frequency candidates
         let measured_freqs: Vec<f64> = job.measured_curve.frequencies.clone();
@@ -691,8 +693,8 @@ impl RoomEQOptimizer {
         let target_curve = job.target_curve.as_ref().unwrap_or(&default_target_curve);
         let optimizer_params = job.optimizer_params.as_ref().unwrap_or(&default_optimizer_params);
         
-        // Generate optimization frequencies based on input data (twice as many)
-        let frequencies = self.generate_optimization_frequencies(&job.measured_curve.frequencies);
+        // Generate optimization frequencies based on input data (with optional interpolation)
+        let frequencies = self.generate_optimization_frequencies(&job.measured_curve.frequencies, optimizer_params.interpolate_frequencies);
         
         // Generate target response
         let target_response = self.generate_target_response(target_curve, &frequencies);

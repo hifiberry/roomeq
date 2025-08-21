@@ -52,6 +52,8 @@ pub struct OptimizerPreset {
     pub min_frequency: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_frequency: Option<f64>,
+    #[serde(default = "default_interpolate_frequencies")]
+    pub interpolate_frequencies: bool,
 }
 
 /// Default Q max is 10.0
@@ -77,6 +79,11 @@ fn default_add_highpass() -> bool {
 /// Default acceptable error is 1.0 dB
 fn default_acceptable_error() -> f64 {
     1.0
+}
+
+/// Default interpolate frequencies is false (no interpolation by default)
+fn default_interpolate_frequencies() -> bool {
+    false
 }
 
 /// Frequency response data
