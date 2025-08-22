@@ -209,4 +209,4 @@ src/oldroomeq
 sample/tannoy/*.png
 src/rust/*.csv
 sample/s?
-
+src/c/analyze
