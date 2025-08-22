@@ -211,3 +211,4 @@ src/rust/*.csv
 sample/s?
 src/c/analyze
 src/c/analyze.o
+src/c/fft-analyse
