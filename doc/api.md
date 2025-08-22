@@ -29,6 +29,7 @@
     - [POST `/audio/play/stop`](#post-audioplaystop)
     - [GET `/audio/play/status`](#get-audioplaystatus)
   - [Room Measurement](#room-measurement)
+  - [Room Measurement Status](#room-measurement-status)
     - [POST `/audio/room-measure`](#audioroom-measure-post)
 - [FFT Analysis](#fft-analysis)
   - [POST `/audio/analyze/fft`](#audioanalyzefft-post)
@@ -118,7 +119,8 @@ Get API information and endpoint overview.
       "/audio/analyze/fft": "FFT analysis of WAV files",
       "/audio/analyze/fft-recording/<id>": "FFT analysis of recordings",
   "/audio/analyze/fft-diff": "FFT difference analysis between two recordings",
-  "/audio/room-measure": "Run end-to-end room measurement and return FFT CSV as JSON"
+  "/audio/room-measure": "Run end-to-end room measurement and return FFT CSV as JSON",
+  "/audio/room-measure/status": "Check if a room measurement is currently running"
     },
     "recording": {
       "/audio/record/start": "Start recording",
@@ -645,6 +647,45 @@ curl -X POST "http://localhost:10315/audio/room-measure?channel=left&count=8&fft
 - The server searches for the script in the development tree (`src/c/room-measure`) or system path (`/usr/bin/room-measure`).
 - A unique CSV file is written under `/tmp` and its path is returned as `csv_path`.
 - The parser skips header-like lines (e.g., `f, db, phase`) and ignores malformed lines.
+- Only one room measurement can run at a time to prevent hardware conflicts and temporary file collisions.
+
+### Room Measurement Status
+
+Check if a room measurement is currently running to prevent concurrent measurements.
+
+**URL:** `GET /audio/room-measure/status`
+
+**Success Response (200):**
+```json
+{
+  "room_measurement_running": false,
+  "lock_info": null
+}
+```
+
+**Response when measurement is running:**
+```json
+{
+  "room_measurement_running": true,
+  "lock_info": {
+    "pid": "12345",
+    "time": "2024-01-01T12:00:00.123456"
+  }
+}
+```
+
+**Example Request:**
+```bash
+curl -X GET "http://localhost:10315/audio/room-measure/status"
+```
+
+**Error Response (409):**
+If you try to start a room measurement while another is running, the `/audio/room-measure` endpoint will return:
+```json
+{
+  "error": "Another room measurement is already running. Please wait for it to complete."
+}
+```
 
   
 

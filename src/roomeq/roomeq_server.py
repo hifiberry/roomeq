@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 import uuid as _uuid
 import re
+import fcntl  # For file locking
 
 # Local imports
 from .fft_utils import fft_diff
@@ -1085,6 +1086,71 @@ def cleanup_status_endpoint():
 
 
 # =============================================================================
+# Room measurement lock management
+# =============================================================================
+
+class RoomMeasurementLock:
+    """Simple file-based lock to prevent concurrent room measurements."""
+    
+    LOCK_FILE = "/tmp/roomeq_room_measurement.lock"
+    
+    def __init__(self):
+        self.lock_fd = None
+        self.acquired = False
+    
+    def acquire(self) -> bool:
+        """Try to acquire the lock. Returns True if successful, False if already locked."""
+        try:
+            self.lock_fd = open(self.LOCK_FILE, 'w')
+            fcntl.flock(self.lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # Write process info to the lock file
+            self.lock_fd.write(f"pid={os.getpid()}\ntime={datetime.now().isoformat()}\n")
+            self.lock_fd.flush()
+            self.acquired = True
+            logger.info("Room measurement lock acquired")
+            return True
+        except (IOError, OSError) as e:
+            if self.lock_fd:
+                self.lock_fd.close()
+                self.lock_fd = None
+            logger.info(f"Room measurement lock could not be acquired: {e}")
+            return False
+    
+    def release(self):
+        """Release the lock."""
+        if self.lock_fd and self.acquired:
+            try:
+                fcntl.flock(self.lock_fd.fileno(), fcntl.LOCK_UN)
+                self.lock_fd.close()
+                os.unlink(self.LOCK_FILE)
+                logger.info("Room measurement lock released")
+            except (IOError, OSError) as e:
+                logger.warning(f"Error releasing room measurement lock: {e}")
+            finally:
+                self.lock_fd = None
+                self.acquired = False
+    
+    def __enter__(self):
+        if not self.acquire():
+            raise RuntimeError("Another room measurement is already running")
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
+    
+    @staticmethod
+    def is_locked() -> bool:
+        """Check if another room measurement is currently running."""
+        try:
+            with open(RoomMeasurementLock.LOCK_FILE, 'r') as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                return False  # Lock was acquired, so not locked by another process
+        except (IOError, OSError, FileNotFoundError):
+            return True  # Either locked by another process or lock file doesn't exist
+
+
+# =============================================================================
 # Room measurement API - Run room-measure script and return FFT data
 # =============================================================================
 
@@ -1169,6 +1235,10 @@ def room_measure_endpoint():
         better frequency resolution but larger output files.
     """
     try:
+        # Check if another room measurement is already running
+        if RoomMeasurementLock.is_locked():
+            abort(409, "Another room measurement is already running. Please wait for it to complete.")
+        
         script_path = _find_room_measure_script()
         if not script_path:
             abort(500, "room-measure script not found. Ensure it is installed or available in the source tree.")
@@ -1235,44 +1305,46 @@ def room_measure_endpoint():
         # Ensure parent dir exists
         os.makedirs(os.path.dirname(out_csv), exist_ok=True)
 
-        # Run the script
-        cmd = [script_path, device, channel, str(count), out_csv, str(fft_points)]
-        logger.info(f"Running room-measure: {' '.join(cmd)} (timeout={timeout:.1f}s, estimated time for {count} measurements, fft_points={fft_points})")
-        try:
-            proc = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=timeout,
-                check=False
-            )
-        except subprocess.TimeoutExpired:
-            logger.error(f"room-measure timed out after {timeout:.1f}s with {count} measurements. Consider increasing timeout or reducing count.")
-            abort(504, f"room-measure timed out after {timeout:.0f}s. Try reducing the count parameter or increasing the timeout.")
+        # Use room measurement lock to prevent concurrent measurements
+        with RoomMeasurementLock():
+            # Run the script
+            cmd = [script_path, device, channel, str(count), out_csv, str(fft_points)]
+            logger.info(f"Running room-measure: {' '.join(cmd)} (timeout={timeout:.1f}s, estimated time for {count} measurements, fft_points={fft_points})")
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=timeout,
+                    check=False
+                )
+            except subprocess.TimeoutExpired:
+                logger.error(f"room-measure timed out after {timeout:.1f}s with {count} measurements. Consider increasing timeout or reducing count.")
+                abort(504, f"room-measure timed out after {timeout:.0f}s. Try reducing the count parameter or increasing the timeout.")
 
-        if proc.returncode != 0:
-            logger.error(f"room-measure failed (rc={proc.returncode})\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
-            return jsonify({
-                "status": "error",
-                "error": "room-measure failed",
-                "return_code": proc.returncode,
-                "stdout_tail": proc.stdout.splitlines()[-20:],
-                "stderr_tail": proc.stderr.splitlines()[-20:]
-            }), 500
+            if proc.returncode != 0:
+                logger.error(f"room-measure failed (rc={proc.returncode})\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
+                return jsonify({
+                    "status": "error",
+                    "error": "room-measure failed",
+                    "return_code": proc.returncode,
+                    "stdout_tail": proc.stdout.splitlines()[-20:],
+                    "stderr_tail": proc.stderr.splitlines()[-20:]
+                }), 500
 
-        # Verify CSV was produced
-        if not os.path.exists(out_csv):
-            logger.error(f"room-measure completed but CSV not found at {out_csv}")
-            return jsonify({
-                "status": "error",
-                "error": "CSV output not found",
-                "stdout_tail": proc.stdout.splitlines()[-20:],
-                "stderr_tail": proc.stderr.splitlines()[-20:]
-            }), 500
+            # Verify CSV was produced
+            if not os.path.exists(out_csv):
+                logger.error(f"room-measure completed but CSV not found at {out_csv}")
+                return jsonify({
+                    "status": "error",
+                    "error": "CSV output not found",
+                    "stdout_tail": proc.stdout.splitlines()[-20:],
+                    "stderr_tail": proc.stderr.splitlines()[-20:]
+                }), 500
 
-        # Parse CSV
-        fft_data = _parse_fft_csv(out_csv)
+            # Parse CSV
+            fft_data = _parse_fft_csv(out_csv)
 
         # Optional normalization of magnitudes to a specific frequency
         normalization_info = None
@@ -1317,6 +1389,36 @@ def room_measure_endpoint():
     except Exception as e:
         logger.error(f"Error in room-measure endpoint: {e}")
         abort(500, f"Room measurement failed: {str(e)}")
+
+
+@app.route("/audio/room-measure/status", methods=["GET"])
+def room_measure_status():
+    """Check if a room measurement is currently running."""
+    try:
+        is_running = RoomMeasurementLock.is_locked()
+        
+        # Try to get lock file info if it exists
+        lock_info = None
+        if is_running:
+            try:
+                with open(RoomMeasurementLock.LOCK_FILE, 'r') as f:
+                    content = f.read()
+                    lock_info = {}
+                    for line in content.strip().split('\n'):
+                        if '=' in line:
+                            key, value = line.split('=', 1)
+                            lock_info[key] = value
+            except (IOError, OSError):
+                pass  # Lock file might not be readable or might not contain expected format
+        
+        return jsonify({
+            "room_measurement_running": is_running,
+            "lock_info": lock_info
+        })
+        
+    except Exception as e:
+        logger.error(f"Error checking room-measure status: {e}")
+        abort(500, f"Failed to check room measurement status: {str(e)}")
 
 
 
@@ -2042,7 +2144,8 @@ def root():
                 "/audio/analyze/fft": "Analyze WAV file with FFT (by filename or filepath)",
                 "/audio/analyze/fft-recording/<recording_id>": "Analyze recorded file with FFT by recording ID",
                 "/audio/analyze/fft-diff": "Compare two recordings with FFT difference analysis",
-                "/audio/room-measure": "Run end-to-end room measurement and return FFT CSV as JSON"
+                "/audio/room-measure": "Run end-to-end room measurement and return FFT CSV as JSON",
+                "/audio/room-measure/status": "Check if a room measurement is currently running"
             },
             "eq_optimization": {
                 "/eq/presets/targets": "List available target response curves",
@@ -2127,6 +2230,14 @@ def root():
                     "basic": "curl -X POST 'http://localhost:10315/audio/room-measure?device=hw:0,0&channel=left&count=8'",
                     "normalized": "curl -X POST 'http://localhost:10315/audio/room-measure?channel=left&count=5&normalize_frequency=1000'",
                     "high_resolution": "curl -X POST 'http://localhost:10315/audio/room-measure?channel=left&count=8&fft_points=128'"
+                }
+            },
+            "room_measure_status": {
+                "description": "Check if a room measurement is currently running",
+                "method": "GET",
+                "url": "/audio/room-measure/status",
+                "examples": {
+                    "check_status": "curl -X GET 'http://localhost:10315/audio/room-measure/status'"
                 }
             },
             "fft_difference_analysis": {
