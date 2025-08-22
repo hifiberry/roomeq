@@ -1142,12 +1142,22 @@ class RoomMeasurementLock:
     def is_locked() -> bool:
         """Check if another room measurement is currently running."""
         try:
+            # Try to open and lock the file
             with open(RoomMeasurementLock.LOCK_FILE, 'r') as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                return False  # Lock was acquired, so not locked by another process
-        except (IOError, OSError, FileNotFoundError):
-            return True  # Either locked by another process or lock file doesn't exist
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    # If we got here, we acquired the lock, meaning it wasn't locked
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    return False
+                except (IOError, OSError):
+                    # Could not acquire lock, meaning it's locked by another process
+                    return True
+        except FileNotFoundError:
+            # No lock file exists, so not locked
+            return False
+        except (IOError, OSError):
+            # Could not read the file, assume it's locked to be safe
+            return True
 
 
 # =============================================================================
