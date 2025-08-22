@@ -13,7 +13,7 @@ if [ "$COUNT" == "" ]; then
  echo Channel options:
  echo   left  - Record from left channel only
  echo   right - Record from right channel only  
- echo   both  - Record from both channels (stereo)
+ echo   both  - Record from both channels stereo
  exit 1
 fi
 

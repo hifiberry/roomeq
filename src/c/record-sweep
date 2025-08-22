@@ -11,7 +11,7 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
  echo "  channel          Channel configuration:"
  echo "                   left  - Play signal on left, silence on right"
  echo "                   right - Play signal on right, silence on left"  
- echo "                   both  - Play signal on both channels (default)"
+ echo "                   both  - Play signal on both channels default"
  echo
  echo "Examples:"
  echo "  $0                    # Use default device, both channels"
