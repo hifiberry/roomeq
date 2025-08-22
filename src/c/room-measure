@@ -3,14 +3,17 @@ RECDEVICE=$1
 CHANNEL=$2
 COUNT=$3
 
-PATH=$PATH:/opt/hifiberry/bin
-
 if [ "$COUNT" == "" ]; then
  echo call with $0 record-device channel number-of-measurements
  echo 
- echo e.g. $0 hw0:0 left 8
+ echo e.g. $0 hw:0,0 left 8
  echo This will play the test tone, record the acoustics measurements on hw:0,0
  echo using only the left channel and averaging 8 measurements
+ echo
+ echo Channel options:
+ echo   left  - Record from left channel only
+ echo   right - Record from right channel only  
+ echo   both  - Record from both channels (stereo)
  exit 1
 fi
 
@@ -26,7 +29,7 @@ done
 echo "Recording finished"
 
 # Process the data
-/opt/hifiberry/bin/fft-analyse -v 1 -r signal.wav $RECORDINGS
+/usr/bin/fft-analyse -v 1 -r signal.wav $RECORDINGS
 cp fftdB_vbw.csv /tmp
 cp rec1.wav /tmp/recording.wav
 cp raw.wav /tmp/raw.wav
