@@ -11,6 +11,8 @@ override_dh_auto_build:
 	# Generate signal files
 	mkdir -p $(CURDIR)/debian/signals
 	python3 $(CURDIR)/debian/generate-signals.py $(CURDIR)/debian/signals
+	# Build C binaries
+	cd src/c && $(MAKE) clean && $(MAKE)
 	# Create temporary directory for Rust installation
 	mkdir -p $(CURDIR)/rust_temp
 	# Install latest Rust using rustup with explicit home directory
@@ -42,6 +44,8 @@ override_dh_auto_clean:
 	dh_auto_clean
 	# Clean generated signals
 	rm -rf $(CURDIR)/debian/signals || true
+	# Clean C build artifacts
+	cd src/c && $(MAKE) clean || true
 	# Clean Rust build artifacts but preserve Cargo.lock for reproducible builds
 	cd src/rust && rm -rf target/ || true
 	# Clean temporary Rust installation

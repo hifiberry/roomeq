@@ -1,8 +1,14 @@
 debian/roomeq-server.1 usr/share/man/man1/
 debian/rms-level.1 usr/share/man/man1/
 debian/roomeq-optimizer.1 usr/share/man/man1/
+debian/fft-analyse.1 usr/share/man/man1/
+debian/record-sweep.1 usr/share/man/man1/
+debian/room-measure.1 usr/share/man/man1/
 src/rust/target/release/roomeq-optimizer usr/bin/
 src/rust/README.md usr/share/doc/roomeq/rust/
 src/rust/example_job.json usr/share/doc/roomeq/rust/examples/
 src/rust/demo_rust_optimizer.py usr/share/doc/roomeq/rust/examples/
+src/c/fft-analyse usr/bin/
+src/c/record-sweep usr/bin/
+src/c/room-measure usr/bin/
 debian/signals/* usr/share/hifiberry/signals/

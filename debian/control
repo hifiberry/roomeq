@@ -2,13 +2,13 @@ Source: roomeq
 Section: sound
 Priority: optional
 Maintainer: HiFiBerry <support@hifiberry.com>
-Build-Depends: debhelper-compat (= 13), dh-python, python3, python3-setuptools, python3-flask, python3-flask-cors, python3-numpy, python3-alsaaudio, curl
+Build-Depends: debhelper-compat (= 13), dh-python, python3, python3-setuptools, python3-flask, python3-flask-cors, python3-numpy, python3-alsaaudio, curl, gcc, libasound2-dev
 Standards-Version: 4.5.0
 Homepage: https://github.com/hifiberry/roomeq
 
 Package: roomeq
 Architecture: any
-Depends: python3, python3-flask, python3-flask-cors, python3-numpy, python3-alsaaudio, ${python3:Depends}, ${misc:Depends}
+Depends: python3, python3-flask, python3-flask-cors, python3-numpy, python3-alsaaudio, sox, alsa-utils, ${python3:Depends}, ${misc:Depends}
 Description: Room equalization REST API with high-performance Rust optimizer
  A comprehensive REST API for audio measurements including microphone
  detection, SPL measurement, signal generation, and advanced room EQ
@@ -18,3 +18,8 @@ Description: Room equalization REST API with high-performance Rust optimizer
  .
  The Rust optimizer (roomeq-optimizer) provides streaming output of
  optimization progress and frequency response data after each filter step.
+ .
+ Also includes acoustic measurement tools:
+ - fft-analyse: FFT analysis tool for frequency response measurement
+ - record-sweep: Script for recording frequency sweeps
+ - room-measure: Automated multi-measurement acoustic analysis

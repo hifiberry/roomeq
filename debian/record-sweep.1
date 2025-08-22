@@ -1,0 +1,55 @@
+.TH RECORD-SWEEP 1 "August 2025" "roomeq" "HiFiBerry Tools"
+.SH NAME
+record-sweep \- Record audio sweep for acoustic measurements
+.SH SYNOPSIS
+.B record-sweep
+[\fIrecord-device\fR] [\fIchannel\fR]
+.SH DESCRIPTION
+.B record-sweep
+is a script that generates and records a frequency sweep for acoustic measurements. It creates a test signal, plays it through the audio system, and records the acoustic response for analysis.
+
+The script automatically detects the best recording format for the specified audio device and generates both the reference signal and the recorded response.
+.SH ARGUMENTS
+.TP
+\fIrecord-device\fR
+ALSA recording device (default: hw:0,0)
+.TP
+\fIchannel\fR
+Channel configuration: "left", "right", or stereo (default: stereo)
+.SH FILES
+The script generates several files:
+.TP
+\fBsignal.wav\fR
+Reference sweep signal (20Hz to 20kHz)
+.TP
+\fBrecording.wav\fR
+Final processed recording (mono, 32-bit)
+.TP
+\fBraw.wav\fR
+Raw recorded audio before processing
+.TP
+\fBplay.wav\fR
+Playback signal (stereo with channel routing)
+.SH EXAMPLES
+Record using default device in stereo:
+.nf
+record-sweep
+.fi
+
+Record using specific device with left channel only:
+.nf
+record-sweep hw:1,0 left
+.fi
+.SH REQUIREMENTS
+Requires the following tools:
+.br
+- sox (audio processing)
+.br
+- arecord (ALSA recording)
+.br
+- play (audio playback)
+.SH AUTHOR
+Part of the HiFiBerry audio measurement suite.
+.SH SEE ALSO
+.BR fft-analyse (1),
+.BR room-measure (1)

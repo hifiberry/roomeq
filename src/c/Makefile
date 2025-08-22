@@ -7,7 +7,7 @@ LDFLAGS = -lm -lasound
 all: bin
 
 OBJ = analyze.o
-BIN = analyze
+BIN = fft-analyse
 
 bin: $(OBJ)
 	$(CC) $(CFLAGS) -o $(BIN) $(OBJ) $(LDFLAGS)

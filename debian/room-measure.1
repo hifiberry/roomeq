@@ -1,0 +1,69 @@
+.TH ROOM-MEASURE 1 "August 2025" "roomeq" "HiFiBerry Tools"
+.SH NAME
+room-measure \- Perform multiple acoustic measurements and analysis
+.SH SYNOPSIS
+.B room-measure
+\fIrecord-device\fR \fIchannel\fR \fInumber-of-measurements\fR
+.SH DESCRIPTION
+.B room-measure
+is a comprehensive acoustic measurement script that performs multiple sweep recordings and averages the results for improved accuracy. It automates the complete measurement process from signal generation to FFT analysis.
+
+The script performs the specified number of measurements, processes them with FFT analysis, and outputs the averaged frequency response data.
+.SH ARGUMENTS
+.TP
+\fIrecord-device\fR
+ALSA recording device (e.g., hw:0,0)
+.TP
+\fIchannel\fR
+Channel configuration: "left" or "right"
+.TP
+\fInumber-of-measurements\fR
+Number of measurements to average (recommended: 3-8)
+.SH EXAMPLES
+Perform 8 measurements using hw:0,0 with left channel:
+.nf
+room-measure hw:0,0 left 8
+.fi
+
+This will:
+.br
+1. Record 8 separate sweep measurements
+.br
+2. Average the results using fft-analyse
+.br
+3. Output the final frequency response
+.SH FILES
+Results are copied to /tmp/:
+.TP
+\fBfftdB_vbw.csv\fR
+Final averaged frequency response analysis
+.TP
+\fBrecording.wav\fR
+First measurement for reference
+.TP
+\fBraw.wav\fR
+Raw recording data
+.TP
+\fBsignal.wav\fR
+Reference sweep signal
+.SH WORKFLOW
+1. Creates temporary working directory
+.br
+2. Runs record-sweep for each measurement
+.br
+3. Processes all recordings with fft-analyse
+.br
+4. Copies results to /tmp/ 
+.br
+5. Cleans up temporary files
+.SH REQUIREMENTS
+- fft-analyse (for processing)
+.br
+- record-sweep (for recordings)
+.br
+- Standard audio tools (sox, arecord, play)
+.SH AUTHOR
+Part of the HiFiBerry audio measurement suite.
+.SH SEE ALSO
+.BR fft-analyse (1),
+.BR record-sweep (1)

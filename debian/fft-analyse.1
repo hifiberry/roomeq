@@ -1,0 +1,49 @@
+.TH FFT-ANALYSE 1 "August 2025" "roomeq" "HiFiBerry Tools"
+.SH NAME
+fft-analyse \- HiFiBerry MultiFFT Tool for acoustic frequency analysis
+.SH SYNOPSIS
+.B fft-analyse
+[\fIOPTIONS\fR] \fB\-r\fR \fIreference-file\fR \fIfile1\fR \fIfile2\fR ...
+.SH DESCRIPTION
+.B fft-analyse
+is a tool for performing FFT analysis on WAV audio files to analyze frequency response characteristics. It compares recorded audio files against a reference file to compute the frequency response difference.
+
+The tool reads 32-bit mono WAV files, performs Fast Fourier Transform analysis, and outputs the results to CSV format for further analysis. It's designed for acoustic measurement and room correction applications.
+.SH OPTIONS
+.TP
+\fB\-r\fR \fIreference-file\fR
+Specify the reference WAV file to compare against (required)
+.TP
+\fB\-n\fR \fInumber\fR
+Number of reduced FFT sample points (default: 64)
+.TP
+\fB\-v\fR \fIlevel\fR
+Set verbosity level for detailed output
+.TP
+\fB\-h\fR
+Show help message and exit
+.SH FILES
+The tool outputs analysis results to:
+.TP
+\fBfftdB_vbw.csv\fR
+Frequency response data in CSV format with frequency, magnitude (dB), and phase information
+.SH EXAMPLES
+Analyze multiple recordings against a reference sweep:
+.nf
+fft-analyse -v 1 -r signal.wav recording1.wav recording2.wav recording3.wav
+.fi
+
+This will compare the recordings against the reference and output the averaged frequency response to fftdB_vbw.csv.
+.SH REQUIREMENTS
+Input files must be:
+.br
+- 32-bit mono WAV files
+.br
+- Same sample rate as reference file
+.SH AUTHOR
+Created by Joerg Schambacher, i2Audio GmbH (2019)
+.br
+Part of the HiFiBerry audio measurement suite.
+.SH SEE ALSO
+.BR record-sweep (1),
+.BR room-measure (1)
