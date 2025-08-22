@@ -732,20 +732,15 @@ impl RoomEQOptimizer {
         // Find usable frequency range
         let (_low_idx, _high_idx, f_low_detected, f_high_detected) = self.find_usable_range(&frequencies, &measured_response);
 
-        // Check for frequency overrides in optimizer params
-        let f_low = optimizer_params.min_frequency.unwrap_or(f_low_detected);
-        let f_high = optimizer_params.max_frequency.unwrap_or(f_high_detected);
+        // Always use detected frequency range (ignore optimizer params for usable range calculation)
+        let f_low = f_low_detected;
+        let f_high = f_high_detected;
 
         // Calculate frequency candidates
         let measured_freqs: Vec<f64> = job.measured_curve.frequencies.clone();
         let frequency_candidates = self.generate_frequency_candidates(f_low, f_high, &measured_freqs);
 
-        let message = if f_low != f_low_detected || f_high != f_high_detected {
-            format!("Frequency range overridden: {:.1} Hz - {:.1} Hz (detected: {:.1} Hz - {:.1} Hz)", 
-                    f_low, f_high, f_low_detected, f_high_detected)
-        } else {
-            format!("Detected usable frequency range: {:.1} Hz - {:.1} Hz", f_low, f_high)
-        };
+        let message = format!("Detected usable frequency range: {:.1} Hz - {:.1} Hz", f_low, f_high);
 
         UsableRangeResult {
             usable_freq_low: f_low,
@@ -781,9 +776,9 @@ impl RoomEQOptimizer {
         // Find usable frequency range for adaptive high-pass placement
         let (_low_idx, _high_idx, f_low_detected, f_high_detected) = self.find_usable_range(&frequencies, &measured_response);
 
-        // Check for frequency overrides in optimizer params
-        let f_low = optimizer_params.min_frequency.unwrap_or(f_low_detected);
-        let f_high = optimizer_params.max_frequency.unwrap_or(f_high_detected);
+        // Always use detected frequency range (ignore optimizer params for usable range calculation)
+        let f_low = f_low_detected;
+        let f_high = f_high_detected;
 
         // Output usable frequency range information
         if self.output_progress {
@@ -791,13 +786,8 @@ impl RoomEQOptimizer {
             let frequency_candidates = self.generate_frequency_candidates(f_low, f_high, &measured_freqs);
             
             if self.human_readable {
-                if f_low != f_low_detected || f_high != f_high_detected {
-                    println!("Usable frequency range overridden: {:.1} Hz - {:.1} Hz ({} candidates) - detected: {:.1} Hz - {:.1} Hz", 
-                            f_low, f_high, frequency_candidates.len(), f_low_detected, f_high_detected);
-                } else {
-                    println!("Usable frequency range: {:.1} Hz - {:.1} Hz ({} frequency candidates)", 
-                            f_low, f_high, frequency_candidates.len());
-                }
+                println!("Usable frequency range: {:.1} Hz - {:.1} Hz ({} frequency candidates)", 
+                        f_low, f_high, frequency_candidates.len());
             } else {
                 // Output JSON message for usable frequency range detection
                 let range_json = serde_json::json!({
@@ -808,17 +798,12 @@ impl RoomEQOptimizer {
                     },
                     "frequency_candidates": frequency_candidates.len(),
                     "optimization_frequencies": frequencies.len(),
-                    "overridden": f_low != f_low_detected || f_high != f_high_detected,
+                    "overridden": false,  // Never overridden since we always use detected values
                     "detected_range": {
                         "low_hz": f_low_detected,
                         "high_hz": f_high_detected
                     },
-                    "message": if f_low != f_low_detected || f_high != f_high_detected {
-                        format!("Frequency range overridden: {:.1} Hz - {:.1} Hz (detected: {:.1} Hz - {:.1} Hz)", 
-                                f_low, f_high, f_low_detected, f_high_detected)
-                    } else {
-                        format!("Detected usable frequency range: {:.1} Hz - {:.1} Hz", f_low, f_high)
-                    }
+                    "message": format!("Detected usable frequency range: {:.1} Hz - {:.1} Hz", f_low, f_high)
                 });
                 
                 if let Ok(json) = serde_json::to_string(&range_json) {
