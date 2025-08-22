@@ -870,8 +870,18 @@ impl RoomEQOptimizer {
         // Keep the combination that provides the best improvement
         let mut used_frequencies: Vec<f64> = Vec::new();
         
-        for filter_idx in 0..job.filter_count {
-            let progress = (filter_idx as f64 / job.filter_count as f64) * 100.0;
+        // Calculate how many EQ filters to create (subtract 1 if high-pass was added)
+        let eq_filter_count = if optimizer_params.add_highpass && job.filter_count > 0 {
+            job.filter_count - 1
+        } else {
+            job.filter_count
+        };
+        
+        for filter_idx in 0..eq_filter_count {
+            // Calculate progress: if high-pass was added, account for it in total steps
+            let total_steps = if optimizer_params.add_highpass { job.filter_count } else { eq_filter_count };
+            let current_step = if optimizer_params.add_highpass { filter_idx + 1 } else { filter_idx };
+            let progress = (current_step as f64 / total_steps as f64) * 100.0;
             
             let mut best_filter: Option<BiquadFilter> = None;
             // Update weights for current response before calculating error
@@ -934,13 +944,20 @@ impl RoomEQOptimizer {
                 filters.push(filter.clone());
                 current_response = best_response;
                 
+                // Calculate step number: if high-pass was added, EQ filters start from step 1
+                let step_number = if optimizer_params.add_highpass {
+                    filter_idx + 2  // HP is step 0, so EQ filters start at 1
+                } else {
+                    filter_idx + 1
+                };
+                
                 let step = OptimizationStep {
-                    step: filter_idx + 1,
+                    step: step_number,
                     filters: filters.clone(),
                     corrected_response: FrequencyResponse::new(frequencies.clone(), current_response.clone()),
                     residual_error: best_error,
                     message: format!("Added filter {} at {:.1}Hz, Q={:.1}, {:.1}dB", 
-                                   filter_idx + 1, filter.frequency, filter.q, filter.gain_db),
+                                   step_number, filter.frequency, filter.q, filter.gain_db),
                     progress_percent: progress,
                 };
                 steps.push(step.clone());
