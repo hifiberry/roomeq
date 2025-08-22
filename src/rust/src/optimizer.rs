@@ -534,11 +534,10 @@ impl RoomEQOptimizer {
     }
 
     /// Find usable frequency range for optimization
-    /// For low frequencies: Start from lowest frequency and find 2 consecutive values < -10dB.
-    /// The smallest frequency larger than this is the usable low frequency. Check up to max 200Hz.
-    /// If no values like this can be found, use 20Hz as f_min.
-    /// For high frequencies: Do the same but from high frequencies going down to 12kHz.
-    /// If nothing can be found, use 20kHz.
+    /// For low frequencies: Find the LAST sequence of 2+ consecutive values < -10dB up to 200Hz.
+    /// The frequency after this last sequence is the usable low frequency.
+    /// For high frequencies: Find the LAST sequence of 2+ consecutive values < -10dB from 12kHz up.
+    /// The frequency before this last sequence is the usable high frequency.
     pub fn find_usable_range(&self, frequencies: &[f64], magnitudes: &[f64]) -> (usize, usize, f64, f64) {
         let threshold_db = -10.0;
         let max_low_freq = 200.0;
@@ -546,38 +545,54 @@ impl RoomEQOptimizer {
         let fallback_low = 20.0;
         let fallback_high = 20000.0;
         
-        // Find low frequency limit
+        // Find low frequency limit - search for LAST consecutive sequence
         let mut f_low = fallback_low;
         let mut low_idx = 0;
+        let mut last_bad_sequence_end = None;
         
         // Search from lowest frequency up to 200Hz
-        let mut consecutive_low_count = 0;
+        let mut consecutive_count = 0;
         for i in 0..frequencies.len() {
             if frequencies[i] > max_low_freq {
                 break;
             }
             
             if magnitudes[i] < threshold_db {
-                consecutive_low_count += 1;
-                if consecutive_low_count >= 2 {
-                    // Found 2 consecutive values < -10dB
-                    // Find the next frequency that is the usable low frequency
-                    if i + 1 < frequencies.len() {
-                        f_low = frequencies[i + 1];
-                        low_idx = i + 1;
-                    } else {
-                        f_low = frequencies[i];
-                        low_idx = i;
-                    }
-                    break;
-                }
+                consecutive_count += 1;
             } else {
-                consecutive_low_count = 0;
+                // End of a potential bad sequence
+                if consecutive_count >= 2 {
+                    // Found a sequence of 2+ consecutive bad values
+                    last_bad_sequence_end = Some(i - 1); // End of the bad sequence
+                }
+                consecutive_count = 0;
             }
         }
         
-        // If no suitable low frequency found, find closest to fallback_low
-        if f_low == fallback_low {
+        // Check if we ended with a bad sequence (at the boundary)
+        if consecutive_count >= 2 {
+            // Find the last index we checked that was still <= max_low_freq
+            for i in (0..frequencies.len()).rev() {
+                if frequencies[i] <= max_low_freq {
+                    last_bad_sequence_end = Some(i);
+                    break;
+                }
+            }
+        }
+        
+        // Set the usable low frequency
+        if let Some(bad_end_idx) = last_bad_sequence_end {
+            // Use the frequency after the last bad sequence
+            if bad_end_idx + 1 < frequencies.len() {
+                low_idx = bad_end_idx + 1;
+                f_low = frequencies[low_idx];
+            } else {
+                // Fallback if we're at the end
+                low_idx = bad_end_idx;
+                f_low = frequencies[low_idx];
+            }
+        } else {
+            // No bad sequence found, find closest to fallback_low
             let mut min_diff = f64::INFINITY;
             for i in 0..frequencies.len() {
                 let diff = (frequencies[i] - fallback_low).abs();
@@ -589,38 +604,54 @@ impl RoomEQOptimizer {
             }
         }
         
-        // Find high frequency limit
+        // Find high frequency limit - search for LAST consecutive sequence from high to low
         let mut f_high = fallback_high;
         let mut high_idx = frequencies.len() - 1;
+        let mut last_bad_sequence_start = None;
         
         // Search from highest frequency down to 12kHz
-        let mut consecutive_high_count = 0;
+        let mut consecutive_count = 0;
         for i in (0..frequencies.len()).rev() {
             if frequencies[i] < min_high_freq {
                 break;
             }
             
             if magnitudes[i] < threshold_db {
-                consecutive_high_count += 1;
-                if consecutive_high_count >= 2 {
-                    // Found 2 consecutive values < -10dB
-                    // Find the previous frequency that is the usable high frequency
-                    if i > 0 {
-                        f_high = frequencies[i - 1];
-                        high_idx = i - 1;
-                    } else {
-                        f_high = frequencies[i];
-                        high_idx = i;
-                    }
-                    break;
-                }
+                consecutive_count += 1;
             } else {
-                consecutive_high_count = 0;
+                // End of a potential bad sequence (when going backwards)
+                if consecutive_count >= 2 {
+                    // Found a sequence of 2+ consecutive bad values
+                    last_bad_sequence_start = Some(i + 1); // Start of the bad sequence (when going backwards)
+                }
+                consecutive_count = 0;
             }
         }
         
-        // If no suitable high frequency found, find closest to fallback_high
-        if f_high == fallback_high {
+        // Check if we ended with a bad sequence (at the boundary)
+        if consecutive_count >= 2 {
+            // Find the first index we checked that was still >= min_high_freq
+            for i in 0..frequencies.len() {
+                if frequencies[i] >= min_high_freq {
+                    last_bad_sequence_start = Some(i);
+                    break;
+                }
+            }
+        }
+        
+        // Set the usable high frequency
+        if let Some(bad_start_idx) = last_bad_sequence_start {
+            // Use the frequency before the last bad sequence
+            if bad_start_idx > 0 {
+                high_idx = bad_start_idx - 1;
+                f_high = frequencies[high_idx];
+            } else {
+                // Fallback if we're at the beginning
+                high_idx = bad_start_idx;
+                f_high = frequencies[high_idx];
+            }
+        } else {
+            // No bad sequence found, find closest to fallback_high
             let mut min_diff = f64::INFINITY;
             for i in 0..frequencies.len() {
                 let diff = (frequencies[i] - fallback_high).abs();
