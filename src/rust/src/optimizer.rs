@@ -824,8 +824,8 @@ impl RoomEQOptimizer {
 
         // Add adaptive high-pass filter if requested (maximum one allowed)
         if optimizer_params.add_highpass {
-            // Calculate high-pass frequency as half of the lowest usable frequency (like Python)
-            let hp_frequency = (f_low / 2.0).max(20.0).min(120.0); // Clamp between 20-120Hz for safety
+            // Calculate high-pass frequency as the lowest usable frequency
+            let hp_frequency = f_low.max(20.0).min(120.0); // Clamp between 20-120Hz for safety
             let hp_q = 0.707; // Butterworth response
             
             let hp_filter = BiquadFilter::high_pass(hp_frequency, hp_q, self.sample_rate);
