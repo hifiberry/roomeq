@@ -533,73 +533,116 @@ impl RoomEQOptimizer {
         }
     }
 
-    /// Find usable frequency range for optimization (similar to Python version)
+    /// Find usable frequency range for optimization
+    /// For low frequencies: Start from lowest frequency and find 2 consecutive values < -10dB.
+    /// The smallest frequency larger than this is the usable low frequency. Check up to max 200Hz.
+    /// If no values like this can be found, use 20Hz as f_min.
+    /// For high frequencies: Do the same but from high frequencies going down to 12kHz.
+    /// If nothing can be found, use 20kHz.
     pub fn find_usable_range(&self, frequencies: &[f64], magnitudes: &[f64]) -> (usize, usize, f64, f64) {
-        let min_db = -8.0;
-        let avg_range = (200.0, 8000.0);
-        let max_fails = if frequencies.len() >= 64 { 2 } else { 1 };
-
-        // Calculate average level in the specified range
-        let mut avg_sum = 0.0;
-        let mut avg_count = 0;
-        for i in 0..frequencies.len() {
-            if frequencies[i] >= avg_range.0 && frequencies[i] <= avg_range.1 {
-                avg_sum += magnitudes[i];
-                avg_count += 1;
-            }
-        }
+        let threshold_db = -10.0;
+        let max_low_freq = 200.0;
+        let min_high_freq = 12000.0;
+        let fallback_low = 20.0;
+        let fallback_high = 20000.0;
         
-        if avg_count == 0 {
-            // Fallback to full range if no frequencies in avg range
-            return (0, frequencies.len() - 1, frequencies[0], frequencies[frequencies.len() - 1]);
-        }
-
-        let avg_db = avg_sum / avg_count as f64;
-        
-        // Find center frequency index (closest to 1kHz)
-        let mut center_idx = 0;
-        let mut min_diff = f64::INFINITY;
-        for i in 0..frequencies.len() {
-            let diff = (frequencies[i] - 1000.0).abs();
-            if diff < min_diff {
-                min_diff = diff;
-                center_idx = i;
-            }
-        }
-
-        // Find usable range going down from center
-        let mut fails = 0;
+        // Find low frequency limit
+        let mut f_low = fallback_low;
         let mut low_idx = 0;
-        for i in (0..center_idx).rev() {
-            let normalized_mag = magnitudes[i] - avg_db;
-            if normalized_mag < min_db {
-                fails += 1;
-            } else {
-                fails = 0;
-            }
-            if fails >= max_fails {
-                low_idx = (i + max_fails).min(frequencies.len() - 1);
+        
+        // Search from lowest frequency up to 200Hz
+        let mut consecutive_low_count = 0;
+        for i in 0..frequencies.len() {
+            if frequencies[i] > max_low_freq {
                 break;
             }
+            
+            if magnitudes[i] < threshold_db {
+                consecutive_low_count += 1;
+                if consecutive_low_count >= 2 {
+                    // Found 2 consecutive values < -10dB
+                    // Find the next frequency that is the usable low frequency
+                    if i + 1 < frequencies.len() {
+                        f_low = frequencies[i + 1];
+                        low_idx = i + 1;
+                    } else {
+                        f_low = frequencies[i];
+                        low_idx = i;
+                    }
+                    break;
+                }
+            } else {
+                consecutive_low_count = 0;
+            }
         }
-
-        // Find usable range going up from center
-        fails = 0;
+        
+        // If no suitable low frequency found, find closest to fallback_low
+        if f_low == fallback_low {
+            let mut min_diff = f64::INFINITY;
+            for i in 0..frequencies.len() {
+                let diff = (frequencies[i] - fallback_low).abs();
+                if diff < min_diff {
+                    min_diff = diff;
+                    low_idx = i;
+                    f_low = frequencies[i];
+                }
+            }
+        }
+        
+        // Find high frequency limit
+        let mut f_high = fallback_high;
         let mut high_idx = frequencies.len() - 1;
-        for i in center_idx..frequencies.len() {
-            let normalized_mag = magnitudes[i] - avg_db;
-            if normalized_mag < min_db {
-                fails += 1;
-            } else {
-                fails = 0;
-            }
-            if fails >= max_fails {
-                high_idx = i.saturating_sub(max_fails);
+        
+        // Search from highest frequency down to 12kHz
+        let mut consecutive_high_count = 0;
+        for i in (0..frequencies.len()).rev() {
+            if frequencies[i] < min_high_freq {
                 break;
             }
+            
+            if magnitudes[i] < threshold_db {
+                consecutive_high_count += 1;
+                if consecutive_high_count >= 2 {
+                    // Found 2 consecutive values < -10dB
+                    // Find the previous frequency that is the usable high frequency
+                    if i > 0 {
+                        f_high = frequencies[i - 1];
+                        high_idx = i - 1;
+                    } else {
+                        f_high = frequencies[i];
+                        high_idx = i;
+                    }
+                    break;
+                }
+            } else {
+                consecutive_high_count = 0;
+            }
+        }
+        
+        // If no suitable high frequency found, find closest to fallback_high
+        if f_high == fallback_high {
+            let mut min_diff = f64::INFINITY;
+            for i in 0..frequencies.len() {
+                let diff = (frequencies[i] - fallback_high).abs();
+                if diff < min_diff {
+                    min_diff = diff;
+                    high_idx = i;
+                    f_high = frequencies[i];
+                }
+            }
+        }
+        
+        // Ensure low_idx <= high_idx
+        if low_idx > high_idx {
+            let temp = low_idx;
+            low_idx = high_idx;
+            high_idx = temp;
+            let temp_f = f_low;
+            f_low = f_high;
+            f_high = temp_f;
         }
 
-        (low_idx, high_idx, frequencies[low_idx], frequencies[high_idx])
+        (low_idx, high_idx, f_low, f_high)
     }
 
     /// Generate optimization frequencies (log-spaced)
