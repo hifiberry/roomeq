@@ -1165,6 +1165,8 @@ def room_measure_endpoint():
       - normalize_frequency: optional frequency in Hz (10-22000). If set, normalize FFT magnitudes 
         so the closest frequency becomes 0 dB. All other frequencies are adjusted relative to this reference.
         Set to "none" to disable normalization.
+      - fft_points: number of reduced FFT sample points (8-512, default: 64). Higher values give 
+        better frequency resolution but larger output files.
     """
     try:
         script_path = _find_room_measure_script()
@@ -1177,6 +1179,7 @@ def room_measure_endpoint():
         count_str = request.args.get("count", "8")
         timeout_str = request.args.get("timeout")
         normalize_frequency_str = request.args.get("normalize_frequency")
+        fft_points_str = request.args.get("fft_points", "64")
 
         # Validate channel
         if channel not in {"left", "right", "both"}:
@@ -1189,6 +1192,14 @@ def room_measure_endpoint():
                 abort(400, "count must be between 1 and 20")
         except ValueError:
             abort(400, "Invalid count: must be an integer")
+
+        # Validate fft_points
+        try:
+            fft_points = int(fft_points_str)
+            if fft_points < 8 or fft_points > 512:
+                abort(400, "fft_points must be between 8 and 512")
+        except ValueError:
+            abort(400, "Invalid fft_points: must be an integer")
 
         # Auto-detect device if not provided
         if not device:
@@ -1207,7 +1218,8 @@ def room_measure_endpoint():
         unique_id = str(_uuid.uuid4())[:8]
         out_csv = os.path.join("/tmp", f"fftdB_vbw_{unique_id}.csv")
 
-        # Compute a sensible timeout if not provided (estimate ~6s per sweep + overhead)
+        # Compute a sensible timeout if not provided (estimate ~15s per sweep + overhead)
+        # Each room measurement involves: recording sweep, processing, file I/O
         timeout = None
         if timeout_str:
             try:
@@ -1217,14 +1229,15 @@ def room_measure_endpoint():
             except ValueError:
                 abort(400, "Invalid timeout: must be a number")
         else:
-            timeout = max(30.0, 8.0 * count + 20.0)
+            # More realistic timing: 15s per measurement + 60s base overhead for setup/processing
+            timeout = max(60.0, 15.0 * count + 60.0)
 
         # Ensure parent dir exists
         os.makedirs(os.path.dirname(out_csv), exist_ok=True)
 
         # Run the script
-        cmd = [script_path, device, channel, str(count), out_csv]
-        logger.info(f"Running room-measure: {' '.join(cmd)} (timeout={timeout}s)")
+        cmd = [script_path, device, channel, str(count), out_csv, str(fft_points)]
+        logger.info(f"Running room-measure: {' '.join(cmd)} (timeout={timeout:.1f}s, estimated time for {count} measurements, fft_points={fft_points})")
         try:
             proc = subprocess.run(
                 cmd,
@@ -1235,7 +1248,8 @@ def room_measure_endpoint():
                 check=False
             )
         except subprocess.TimeoutExpired:
-            abort(504, f"room-measure timed out after {timeout:.0f}s")
+            logger.error(f"room-measure timed out after {timeout:.1f}s with {count} measurements. Consider increasing timeout or reducing count.")
+            abort(504, f"room-measure timed out after {timeout:.0f}s. Try reducing the count parameter or increasing the timeout.")
 
         if proc.returncode != 0:
             logger.error(f"room-measure failed (rc={proc.returncode})\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
@@ -1293,10 +1307,11 @@ def room_measure_endpoint():
             "device": device,
             "channel": channel,
             "count": count,
+            "fft_points": fft_points,
             "csv_path": out_csv,
             "fft": fft_data,
             **({"normalization": normalization_info} if normalization_info else {}),
-            "message": f"room-measure completed with {fft_data['points']} points"
+            "message": f"room-measure completed with {fft_data['points']} points using {fft_points} FFT sample points"
         })
 
     except Exception as e:
@@ -2105,11 +2120,13 @@ def root():
                     "channel": "left|right|both (default: left)",
                     "count": "Number of measurements to average (1-20, default: 8)",
                     "timeout": "Optional timeout in seconds",
-                    "normalize_frequency": "Optional frequency in Hz (10-22000) for normalization. Makes the closest frequency 0 dB."
+                    "normalize_frequency": "Optional frequency in Hz (10-22000) for normalization. Makes the closest frequency 0 dB.",
+                    "fft_points": "Number of reduced FFT sample points (8-512, default: 64). Higher values give better frequency resolution but larger output."
                 },
                 "examples": {
                     "basic": "curl -X POST 'http://localhost:10315/audio/room-measure?device=hw:0,0&channel=left&count=8'",
-                    "normalized": "curl -X POST 'http://localhost:10315/audio/room-measure?channel=left&count=5&normalize_frequency=1000'"
+                    "normalized": "curl -X POST 'http://localhost:10315/audio/room-measure?channel=left&count=5&normalize_frequency=1000'",
+                    "high_resolution": "curl -X POST 'http://localhost:10315/audio/room-measure?channel=left&count=8&fft_points=128'"
                 }
             },
             "fft_difference_analysis": {

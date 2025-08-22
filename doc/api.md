@@ -579,6 +579,7 @@ The CSV format is three comma-separated columns per line: `frequency_hz, magnitu
 - `count` (integer, optional): Number of measurements to average (1–20, default: 8)
 - `timeout` (number, optional): Overall timeout in seconds (default is estimated from count)
 - `normalize_frequency` (number, optional): Frequency in Hz (10-22000) for magnitude normalization. The closest frequency in the FFT data becomes 0 dB, and all other frequencies are adjusted relative to this reference. Set to "none" to disable normalization.
+- `fft_points` (integer, optional): Number of reduced FFT sample points (8-512, default: 64). Higher values give better frequency resolution but larger output files.
 
 **Example Requests:**
 ```bash
@@ -587,6 +588,9 @@ curl -X POST "http://localhost:10315/audio/room-measure?device=hw:0,0&channel=le
 
 # With normalization at 1 kHz reference
 curl -X POST "http://localhost:10315/audio/room-measure?channel=left&count=5&normalize_frequency=1000"
+
+# High resolution measurement with 128 FFT points
+curl -X POST "http://localhost:10315/audio/room-measure?channel=left&count=8&fft_points=128"
 ```
 
 **Success Response (200):**
@@ -596,6 +600,7 @@ curl -X POST "http://localhost:10315/audio/room-measure?channel=left&count=5&nor
   "device": "hw:0,0",
   "channel": "left",
   "count": 8,
+  "fft_points": 64,
   "csv_path": "/tmp/fftdB_vbw_ab12cd34.csv",
   "fft": {
     "frequencies": [21.11924, 23.526281, 26.207662, ...],
@@ -609,7 +614,7 @@ curl -X POST "http://localhost:10315/audio/room-measure?channel=left&count=5&nor
     "actual_frequency": 1002.3,
     "reference_level_db": -85.2
   },
-  "message": "room-measure completed with 60 points"
+  "message": "room-measure completed with 60 points using 64 FFT sample points"
 }
 ```
 

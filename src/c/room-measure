@@ -4,9 +4,11 @@ CHANNEL=$2
 COUNT=$3
 # Optional: output CSV file path (if relative, it will be resolved against the directory this script was invoked from)
 OUTCSV=$4
+# Optional: number of FFT sample points for fft-analyse (default: 64)
+FFTPOINTS=$5
 
 if [ "$COUNT" == "" ]; then
- echo "Usage: $0 <record-device> <channel> <number-of-measurements> [output.csv]"
+ echo "Usage: $0 <record-device> <channel> <number-of-measurements> [output.csv] [fft-points]"
  echo
  echo "Example:"
  echo "  $0 hw:0,0 left 8"
@@ -16,10 +18,17 @@ if [ "$COUNT" == "" ]; then
  echo "  $0 hw:0,0 left 8 results/my_measurement.csv"
  echo "    Same as above, but writes the CSV to results/my_measurement.csv."
  echo
+ echo "  $0 hw:0,0 left 8 results/my_measurement.csv 128"
+ echo "    Same as above, but uses 128 FFT sample points instead of default 64."
+ echo
  echo "Channel options:"
  echo "  left  - Record from left channel only"
  echo "  right - Record from right channel only"
  echo "  both  - Record from both channels stereo"
+ echo
+ echo "FFT Points:"
+ echo "  Number of reduced FFT sample points (default: 64)"
+ echo "  Higher values give better frequency resolution but larger output"
  exit 1
 fi
 
@@ -46,7 +55,11 @@ done
 echo "Recording finished"
 
 # Process the data
-/usr/bin/fft-analyse -v 1 -r signal.wav $RECORDINGS
+FFT_OPTS=""
+if [ -n "$FFTPOINTS" ]; then
+	FFT_OPTS="-n $FFTPOINTS"
+fi
+/usr/bin/fft-analyse -v 1 $FFT_OPTS -r signal.wav $RECORDINGS
 # Copy result CSV to desired location
 mkdir -p "$(dirname "$OUTPUT_CSV")"
 cp fftdB_vbw.csv "$OUTPUT_CSV"
