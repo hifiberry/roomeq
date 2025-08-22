@@ -28,6 +28,8 @@
     - [POST `/audio/play/file`](#post-audioplayfile)
     - [POST `/audio/play/stop`](#post-audioplaystop)
     - [GET `/audio/play/status`](#get-audioplaystatus)
+  - [Room Measurement](#room-measurement)
+    - [POST `/audio/room-measure`](#audioroom-measure-post)
 - [FFT Analysis](#fft-analysis)
   - [POST `/audio/analyze/fft`](#audioanalyzefft-post)
   - [FFT Analysis Technical Details](#fft-analysis-technical-details)
@@ -115,7 +117,8 @@ Get API information and endpoint overview.
     "fft_analysis": {
       "/audio/analyze/fft": "FFT analysis of WAV files",
       "/audio/analyze/fft-recording/<id>": "FFT analysis of recordings",
-      "/audio/analyze/fft-diff": "FFT difference analysis between two recordings"
+  "/audio/analyze/fft-diff": "FFT difference analysis between two recordings",
+  "/audio/room-measure": "Run end-to-end room measurement and return FFT CSV as JSON"
     },
     "recording": {
       "/audio/record/start": "Start recording",
@@ -562,6 +565,81 @@ curl -X GET http://localhost:10315/audio/play/status
 - `file_duration_single`: Duration of a single playback of the file (file playback only)
 
 For legacy signal types (noise/sine_sweep), additional fields may be included for backward compatibility.
+
+### Room Measurement
+
+#### `/audio/room-measure` [POST]
+Run the end-to-end room measurement using the `room-measure` script. This records a number of sine sweeps via the selected input device, runs FFT analysis, writes a CSV to a temporary path, and returns the parsed FFT data.
+
+The CSV format is three comma-separated columns per line: `frequency_hz, magnitude_db, phase`.
+
+**Query Parameters:**
+- `device` (string, optional): ALSA device name (e.g., `hw:0,0`). Auto-detects the first microphone if not specified
+- `channel` (string, optional): Input channel; one of `left`, `right`, `both` (default: `left`)
+- `count` (integer, optional): Number of measurements to average (1–20, default: 8)
+- `timeout` (number, optional): Overall timeout in seconds (default is estimated from count)
+- `normalize_frequency` (number, optional): Frequency in Hz (10-22000) for magnitude normalization. The closest frequency in the FFT data becomes 0 dB, and all other frequencies are adjusted relative to this reference. Set to "none" to disable normalization.
+
+**Example Requests:**
+```bash
+# Basic room measurement
+curl -X POST "http://localhost:10315/audio/room-measure?device=hw:0,0&channel=left&count=8"
+
+# With normalization at 1 kHz reference
+curl -X POST "http://localhost:10315/audio/room-measure?channel=left&count=5&normalize_frequency=1000"
+```
+
+**Success Response (200):**
+```json
+{
+  "status": "success",
+  "device": "hw:0,0",
+  "channel": "left",
+  "count": 8,
+  "csv_path": "/tmp/fftdB_vbw_ab12cd34.csv",
+  "fft": {
+    "frequencies": [21.11924, 23.526281, 26.207662, ...],
+    "magnitudes_db": [-99.84, -100.43, -97.90, ...],
+    "phase": [-0.0, -0.00001, -0.00007, ...],
+    "points": 60
+  },
+  "normalization": {
+    "applied": true,
+    "requested_frequency": 1000.0,
+    "actual_frequency": 1002.3,
+    "reference_level_db": -85.2
+  },
+  "message": "room-measure completed with 60 points"
+}
+```
+
+**Response Fields:**
+- `fft.frequencies`: Array of frequency values in Hz
+- `fft.magnitudes_db`: Array of magnitude values in dB (normalized if normalize_frequency was specified)
+- `fft.phase`: Array of phase values
+- `fft.points`: Number of frequency points in the measurement
+- `normalization` (optional): Present only when normalize_frequency parameter was used
+  - `applied`: Whether normalization was successfully applied
+  - `requested_frequency`: The normalization frequency requested
+  - `actual_frequency`: The closest available frequency that was used as reference
+  - `reference_level_db`: The original magnitude at the reference frequency before normalization
+```
+
+**Error Response (500):**
+```json
+{
+  "status": "error",
+  "error": "room-measure failed",
+  "return_code": 127,
+  "stdout_tail": ["... last lines of stdout ..."],
+  "stderr_tail": ["... last lines of stderr ..."]
+}
+```
+
+**Notes:**
+- The server searches for the script in the development tree (`src/c/room-measure`) or system path (`/usr/bin/room-measure`).
+- A unique CSV file is written under `/tmp` and its path is returned as `csv_path`.
+- The parser skips header-like lines (e.g., `f, db, phase`) and ignores malformed lines.
 
   
 

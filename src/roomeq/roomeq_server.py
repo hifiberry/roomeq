@@ -14,6 +14,10 @@ import uuid
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
+import subprocess
+import tempfile
+import uuid as _uuid
+import re
 
 # Local imports
 from .fft_utils import fft_diff
@@ -1080,6 +1084,226 @@ def cleanup_status_endpoint():
     return jsonify(get_cleanup_status())
 
 
+# =============================================================================
+# Room measurement API - Run room-measure script and return FFT data
+# =============================================================================
+
+def _find_room_measure_script() -> Optional[str]:
+    """Locate the room-measure script in dev tree or system path.
+    Returns absolute path or None if not found.
+    """
+    # 1) Dev tree: <repo>/src/c/room-measure
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        src_dir = os.path.abspath(os.path.join(here, os.pardir))  # .../src
+        candidate = os.path.join(src_dir, 'c', 'room-measure')
+        if os.path.exists(candidate):
+            return candidate
+    except Exception:
+        pass
+    
+    # 2) System path: /usr/bin/room-measure
+    for sys_path in ['/usr/bin/room-measure', '/usr/local/bin/room-measure']:
+        if os.path.exists(sys_path):
+            return sys_path
+    
+    return None
+
+
+def _parse_fft_csv(csv_path: str) -> Dict[str, Any]:
+    """Parse fftdB_vbw.csv produced by room-measure.
+    Expects rows of three comma-separated values: frequency_hz, magnitude_db, phase.
+    Returns dict with arrays; skips malformed lines.
+    """
+    freqs: List[float] = []
+    mags_db: List[float] = []
+    phases: List[float] = []
+    line_re = re.compile(r'^\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*$')
+    with open(csv_path, 'r') as f:
+        for line in f:
+            s = line.strip()
+            if not s:
+                continue
+            # Skip header-like lines
+            if s.lower().startswith('f') or s.lower().startswith('freq'):
+                continue
+            m = line_re.match(s)
+            if not m:
+                # Try tolerant split as fallback
+                parts = [p.strip() for p in s.split(',')]
+                if len(parts) != 3:
+                    continue
+                try:
+                    f_hz = float(parts[0])
+                    db = float(parts[1])
+                    ph = float(parts[2])
+                except ValueError:
+                    continue
+            else:
+                f_hz = float(m.group(1))
+                db = float(m.group(2))
+                ph = float(m.group(3))
+            freqs.append(f_hz)
+            mags_db.append(db)
+            phases.append(ph)
+    return {
+        "frequencies": freqs,
+        "magnitudes_db": mags_db,
+        "phase": phases,
+        "points": len(freqs)
+    }
+
+
+@app.route("/audio/room-measure", methods=["POST"])
+def room_measure_endpoint():
+    """Run the room-measure script and return parsed FFT CSV data.
+    Query params:
+      - device: ALSA device (e.g. hw:0,0). If omitted, auto-detects first microphone.
+      - channel: left|right|both (default: left)
+      - count: number of measurements to average (1-20, default: 8)
+      - timeout: optional overall timeout in seconds
+      - normalize_frequency: optional frequency in Hz (10-22000). If set, normalize FFT magnitudes 
+        so the closest frequency becomes 0 dB. All other frequencies are adjusted relative to this reference.
+        Set to "none" to disable normalization.
+    """
+    try:
+        script_path = _find_room_measure_script()
+        if not script_path:
+            abort(500, "room-measure script not found. Ensure it is installed or available in the source tree.")
+
+        # Parameters
+        device = request.args.get("device")
+        channel = request.args.get("channel", "left").lower()
+        count_str = request.args.get("count", "8")
+        timeout_str = request.args.get("timeout")
+        normalize_frequency_str = request.args.get("normalize_frequency")
+
+        # Validate channel
+        if channel not in {"left", "right", "both"}:
+            abort(400, "channel must be one of: left, right, both")
+
+        # Validate count
+        try:
+            count = int(count_str)
+            if count < 1 or count > 20:
+                abort(400, "count must be between 1 and 20")
+        except ValueError:
+            abort(400, "Invalid count: must be an integer")
+
+        # Auto-detect device if not provided
+        if not device:
+            try:
+                detector = MicrophoneDetector()
+                microphones = detector.detect_microphones()
+                if not microphones:
+                    abort(500, "No microphone detected. Connect a microphone or specify device explicitly.")
+                card_id = microphones[0][0]
+                device = f"hw:{card_id},0"
+                logger.info(f"Auto-detected microphone device for room-measure: {device}")
+            except Exception as e:
+                abort(500, f"Microphone detection failed: {str(e)}")
+
+        # Create unique temp output path for CSV
+        unique_id = str(_uuid.uuid4())[:8]
+        out_csv = os.path.join("/tmp", f"fftdB_vbw_{unique_id}.csv")
+
+        # Compute a sensible timeout if not provided (estimate ~6s per sweep + overhead)
+        timeout = None
+        if timeout_str:
+            try:
+                timeout = float(timeout_str)
+                if timeout <= 0 or timeout > 3600:
+                    abort(400, "timeout must be > 0 and <= 3600 seconds")
+            except ValueError:
+                abort(400, "Invalid timeout: must be a number")
+        else:
+            timeout = max(30.0, 8.0 * count + 20.0)
+
+        # Ensure parent dir exists
+        os.makedirs(os.path.dirname(out_csv), exist_ok=True)
+
+        # Run the script
+        cmd = [script_path, device, channel, str(count), out_csv]
+        logger.info(f"Running room-measure: {' '.join(cmd)} (timeout={timeout}s)")
+        try:
+            proc = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=timeout,
+                check=False
+            )
+        except subprocess.TimeoutExpired:
+            abort(504, f"room-measure timed out after {timeout:.0f}s")
+
+        if proc.returncode != 0:
+            logger.error(f"room-measure failed (rc={proc.returncode})\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
+            return jsonify({
+                "status": "error",
+                "error": "room-measure failed",
+                "return_code": proc.returncode,
+                "stdout_tail": proc.stdout.splitlines()[-20:],
+                "stderr_tail": proc.stderr.splitlines()[-20:]
+            }), 500
+
+        # Verify CSV was produced
+        if not os.path.exists(out_csv):
+            logger.error(f"room-measure completed but CSV not found at {out_csv}")
+            return jsonify({
+                "status": "error",
+                "error": "CSV output not found",
+                "stdout_tail": proc.stdout.splitlines()[-20:],
+                "stderr_tail": proc.stderr.splitlines()[-20:]
+            }), 500
+
+        # Parse CSV
+        fft_data = _parse_fft_csv(out_csv)
+
+        # Optional normalization of magnitudes to a specific frequency
+        normalization_info = None
+        if normalize_frequency_str and normalize_frequency_str.lower() != "none":
+            try:
+                norm_freq = validate_float_param("normalize_frequency", normalize_frequency_str, 10.0, 22000.0)
+            except Exception as e:
+                # validate_float_param already aborts with 400, but keep in case of unexpected errors
+                abort(400, str(e))
+
+            freqs = fft_data.get("frequencies", [])
+            mags = fft_data.get("magnitudes_db", [])
+            if not freqs or not mags or len(freqs) != len(mags):
+                abort(500, "Invalid FFT data for normalization")
+
+            # Find index of closest frequency
+            closest_idx = min(range(len(freqs)), key=lambda i: abs(freqs[i] - norm_freq))
+            ref_freq = freqs[closest_idx]
+            ref_db = mags[closest_idx]
+            # Normalize: subtract reference dB from all magnitudes
+            fft_data["magnitudes_db"] = [m - ref_db for m in mags]
+            normalization_info = {
+                "applied": True,
+                "requested_frequency": float(norm_freq),
+                "actual_frequency": float(ref_freq),
+                "reference_level_db": float(ref_db)
+            }
+
+        # Response
+        return jsonify({
+            "status": "success",
+            "device": device,
+            "channel": channel,
+            "count": count,
+            "csv_path": out_csv,
+            "fft": fft_data,
+            **({"normalization": normalization_info} if normalization_info else {}),
+            "message": f"room-measure completed with {fft_data['points']} points"
+        })
+
+    except Exception as e:
+        logger.error(f"Error in room-measure endpoint: {e}")
+        abort(500, f"Room measurement failed: {str(e)}")
+
+
 
 # =============================================================================
 # Pre-created Signals API - List and access bundled signal files
@@ -1802,7 +2026,8 @@ def root():
             "fft_analysis": {
                 "/audio/analyze/fft": "Analyze WAV file with FFT (by filename or filepath)",
                 "/audio/analyze/fft-recording/<recording_id>": "Analyze recorded file with FFT by recording ID",
-                "/audio/analyze/fft-diff": "Compare two recordings with FFT difference analysis"
+                "/audio/analyze/fft-diff": "Compare two recordings with FFT difference analysis",
+                "/audio/room-measure": "Run end-to-end room measurement and return FFT CSV as JSON"
             },
             "eq_optimization": {
                 "/eq/presets/targets": "List available target response curves",
@@ -1869,6 +2094,22 @@ def root():
                     "external_file": "curl -X POST 'http://localhost:10315/audio/analyze/fft?filepath=/path/to/file.wav&window=hann&normalize=1000'",
                     "recording_analysis": "curl -X POST 'http://localhost:10315/audio/analyze/fft-recording/abc12345?points_per_octave=12&start_at=1.0'",
                     "difference_analysis": "curl -X POST 'http://localhost:10315/audio/analyze/fft-diff?recording_id1=abc12345&recording_id2=def67890&points_per_octave=16'"
+                }
+            },
+            "room_measure": {
+                "description": "Run the room-measure script to record sweeps and analyze FFT, returning parsed CSV data",
+                "method": "POST",
+                "url": "/audio/room-measure",
+                "parameters": {
+                    "device": "ALSA device (optional, auto-detects if not specified)",
+                    "channel": "left|right|both (default: left)",
+                    "count": "Number of measurements to average (1-20, default: 8)",
+                    "timeout": "Optional timeout in seconds",
+                    "normalize_frequency": "Optional frequency in Hz (10-22000) for normalization. Makes the closest frequency 0 dB."
+                },
+                "examples": {
+                    "basic": "curl -X POST 'http://localhost:10315/audio/room-measure?device=hw:0,0&channel=left&count=8'",
+                    "normalized": "curl -X POST 'http://localhost:10315/audio/room-measure?channel=left&count=5&normalize_frequency=1000'"
                 }
             },
             "fft_difference_analysis": {

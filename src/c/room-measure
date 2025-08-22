@@ -2,19 +2,36 @@
 RECDEVICE=$1
 CHANNEL=$2
 COUNT=$3
+# Optional: output CSV file path (if relative, it will be resolved against the directory this script was invoked from)
+OUTCSV=$4
 
 if [ "$COUNT" == "" ]; then
- echo call with $0 record-device channel number-of-measurements
- echo 
- echo e.g. $0 hw:0,0 left 8
- echo This will play the test tone, record the acoustics measurements on hw:0,0
- echo using only the left channel and averaging 8 measurements
+ echo "Usage: $0 <record-device> <channel> <number-of-measurements> [output.csv]"
  echo
- echo Channel options:
- echo   left  - Record from left channel only
- echo   right - Record from right channel only  
- echo   both  - Record from both channels stereo
+ echo "Example:"
+ echo "  $0 hw:0,0 left 8"
+ echo "    Plays the test tone, records measurements on hw:0,0 using left channel, averages 8 measurements,"
+ echo "    and writes the CSV to /tmp/fftdB_vbw.csv (default)."
+ echo
+ echo "  $0 hw:0,0 left 8 results/my_measurement.csv"
+ echo "    Same as above, but writes the CSV to results/my_measurement.csv."
+ echo
+ echo "Channel options:"
+ echo "  left  - Record from left channel only"
+ echo "  right - Record from right channel only"
+ echo "  both  - Record from both channels stereo"
  exit 1
+fi
+
+# Resolve output CSV path
+ORIGINAL_PWD=$(pwd)
+if [ -z "$OUTCSV" ]; then
+	OUTPUT_CSV="/tmp/fftdB_vbw.csv"
+else
+	case "$OUTCSV" in
+		/*) OUTPUT_CSV="$OUTCSV" ;;
+		*) OUTPUT_CSV="$ORIGINAL_PWD/$OUTCSV" ;;
+	esac
 fi
 
 # Record
@@ -30,7 +47,9 @@ echo "Recording finished"
 
 # Process the data
 /usr/bin/fft-analyse -v 1 -r signal.wav $RECORDINGS
-cp fftdB_vbw.csv /tmp
+# Copy result CSV to desired location
+mkdir -p "$(dirname "$OUTPUT_CSV")"
+cp fftdB_vbw.csv "$OUTPUT_CSV"
 cp rec1.wav /tmp/recording.wav
 cp raw.wav /tmp/raw.wav
 cp signal.wav /tmp/signal.wav
@@ -38,3 +57,6 @@ cp signal.wav /tmp/signal.wav
 # Clean up
 cd /tmp
 rm -rf /tmp/rec$$
+
+# Report output location
+echo "CSV written to: $OUTPUT_CSV"
