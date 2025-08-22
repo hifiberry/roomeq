@@ -1,3 +1,18 @@
+roomeq (0.7.0) bookworm; urgency=medium
+
+  * Added room measurement API endpoint with concurrent protection
+  * Enhanced room-measure script with FFT points parameter control
+  * Fixed usable frequency range detection algorithm for better boundary detection
+  * Improved high-pass filter settings: Butterworth Q=0.707, frequency at usable limit
+  * Added frequency normalization support to room measurement API
+  * Enhanced locking mechanism to prevent concurrent room measurements
+  * Updated timeout calculations for reliable hardware measurement timing
+  * Fixed Rust optimizer to ignore parameter overrides for frequency range detection
+  * Improved EQ filter count management when high-pass filter is enabled
+  * Added comprehensive API documentation and status endpoints
+
+ -- HiFiBerry <support@hifiberry.com>  Thu, 22 Aug 2025 12:00:00 +0000
+
 roomeq (0.6.1) bookworm; urgency=medium
 
   * Added high-performance Rust-based optimizer (roomeq-optimizer binary)
